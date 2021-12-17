@@ -1,6 +1,6 @@
 module Main where
 
-import Day13 (foldOrigami)
+import Day14 (synthesizePolymer)
 
 main :: IO ()
-main = foldOrigami
+main = synthesizePolymer
