@@ -70,11 +70,13 @@ intersection (Horizontal y) h = fmap (,y) . yToX y $ h
 intersection (Vertical x) h = fmap (x,) . xToY x $ h
 intersection g@(Gradient m b) (Gradient n c)
   | m /= n =
-    let numerator = c - b
+    let floorRatio = (% 1) . floor
+        numerator = c - b
         denominator = m - n
         x = numerator / denominator
         y = xToY x g
-     in (x,) <$> y
+        isWhole = x == floorRatio x
+     in if isWhole then (x,) <$> y else Nothing
   | otherwise = Nothing
 intersection g@(Gradient _ _) h = intersection h g
 
@@ -195,13 +197,12 @@ countDistinct = Set.size . Set.fromList
 
 countDanger = countDistinct . findDanger
 
-fuckThis :: [LineSegment] -> Int
+fuckThis :: [LineSegment] -> [Point]
 fuckThis segments =
   let allPoints = segmentPoints =<< segments
       pointCounts :: MMap.MonoidalMap Point (Sum Int)
       pointCounts = foldMap (\p -> MMap.singleton p (Sum 1)) allPoints
-      interestingPoints = MMap.keys . MMap.filter (> 1) $ pointCounts
-   in length interestingPoints
+   in MMap.keys . MMap.filter (> 1) $ pointCounts
 
 parseDimension :: MyParser Dimension
 parseDimension = (% 1) <$> parseInt
@@ -233,3 +234,4 @@ avoidDanger :: IO ()
 avoidDanger = do
   parsed <- parseStdin (parseLineSegments)
   print $ fmap (fuckThis) parsed
+  print $ fmap (countDanger) parsed
