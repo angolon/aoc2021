@@ -5,6 +5,7 @@
 module Day15 where
 
 import Control.Applicative
+import Control.Arrow (arr, (&&&))
 import Control.Lens
 import Control.Monad
 import Data.Bifunctor.Swap (swap)
@@ -20,7 +21,7 @@ import qualified Data.Map.Monoidal as MMap
 import Data.Maybe (isNothing, mapMaybe, maybeToList)
 import Data.Monoid (Sum (..), getSum)
 import Data.Ratio
-import Data.Set (Set, (\\))
+import Data.Set (Set, union, (\\))
 import qualified Data.Set as Set
 import Data.Vector ((!?))
 import qualified Data.Vector as V
@@ -86,36 +87,63 @@ adjacent :: (Int, Int) -> [(Int, Int)]
 adjacent (x, y) = [((x - 1), y), ((x + 1), y), (x, (y - 1)), (x, (y + 1))]
 
 -- Prioritises exploration by least risk?
-step :: Cave -> Path -> [Path]
-step _ [] = [[(0, 0)]]
-step cave@(Cave width height riskLevels) path@(coord : tail)
-  | coord == (width, height) = [path]
+step :: Cave -> Set (Int, Int) -> Path -> ((Set (Int, Int)), [Path])
+step _ _ [] = ((Set.singleton (0, 0)), ([[(0, 0)]]))
+step cave@(Cave width height riskLevels) visited path@(coord : tail)
+  | coord == (width, height) = (visited, [path])
   | otherwise =
-    let validCoord (x, y) = x >= 0 && x <= width && y >= 0 && y <= height
-        adj = filter validCoord . filter (not . flip elem tail) $ adjacent coord
+    let validCoord coord@(x, y) = x >= 0 && x <= width && y >= 0 && y <= height && (not . Set.member coord $ visited)
+        adj = filter validCoord $ adjacent coord
         expanded = (: coord : tail) <$> adj
-     in List.sortOn (pathRisk cave) expanded
+        sorted = List.sortOn (pathRisk cave) expanded
+        nextVisited = visited `union` (Set.fromList adj)
+     in (nextVisited, sorted)
 
 trimPaths :: Cave -> [Path] -> [Path]
 trimPaths cave paths =
-  let endPoints = Set.fromList $ fmap head paths
-      -- filter any redundant paths which intersect with some other endpoint
-      -- noRedundant = filter (all (not . (`Set.member` endPoints)) . tail) paths
-      groupedByEndPoint = NonEmpty.groupAllWith head paths
+  -- filter any redundant paths which intersect with some other endpoint
+  let groupedByEndPoint = NonEmpty.groupAllWith head paths
       deduped = fmap (minimumBy (compare `on` (pathRisk cave))) groupedByEndPoint
-   in List.sortOn (distanceToTarget cave . head) deduped
+      dist = arr distanceToTarget cave . head
+      weight = arr pathRisk cave
+   in -- noRedundant = filter (all (not . (`Set.member` endPoints)) . tail) deduped
+      -- noRedundant =
+      --   filter
+      --     ( \p ->
+      --         let riskP = pathRisk cave p
+      --          in all
+      --               ( \q ->
+      --                   let end = head p
+      --                       q' = dropWhile (/= end) q
+      --                       riskQ = pathRisk cave q'
+      --                    in p == q || null q' || riskP < riskQ
+      --               )
+      --               deduped
+      --     )
+      --     deduped
+      -- List.sortOn (dist &&& weight) deduped
+      List.sortOn (weight &&& dist) deduped
 
 findSafePath :: Cave -> IO Path
 findSafePath cave@(Cave width height _) =
-  let go :: [Path] -> IO Path
-      go [] = go ([(0, 0) : []])
-      go pps@(p : ps)
+  let go :: Set (Int, Int) -> [Path] -> IO Path
+      go _ [] = go (Set.singleton (0, 0)) ([(0, 0) : []])
+      go visited pps@(p : ps)
         | head p == (width, height) = print p >> return p
         | otherwise =
-          let nextPaths = (step cave =<< pps)
+          let (nextVisited, nextPaths) =
+                foldl'
+                  ( \(vs, paths) path ->
+                      -- don't filter on the accumulated visited straight
+                      -- away, as this will cut out more efficient paths.
+                      let (nextVisited, extraPaths) = step cave visited path
+                       in ((vs `union` nextVisited), (extraPaths ++ paths))
+                  )
+                  (visited, [])
+                  pps
               trimmed = trimPaths cave nextPaths
-           in go trimmed
-   in go []
+           in go nextVisited trimmed
+   in go Set.empty []
 
 cheapestPathTo :: Cave -> Set (Int, Int) -> (Int, Int) -> Maybe Path
 cheapestPathTo _ _ (0, 0) = Just [(0, 0)]
