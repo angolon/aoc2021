@@ -10,7 +10,7 @@ import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Data.Monoid (Sum (..))
 import Lib (MyParser, parseStdin)
 import Text.Parsec
@@ -77,31 +77,54 @@ gammaEpsilon counts =
       ε = complement γ .&. mask
    in γ * ε
 
-o2Rating :: [[Bool]] -> Maybe [[Bool]]
-o2Rating bits =
-  let filterMatches mode bit digits bitTails =
-        if mode == bit
+-- if this bit matches the bit condition for the current bit heads
+type BitCondition = [Bool] -> Bool -> Bool
+
+o2BitCondition :: BitCondition
+o2BitCondition bitHeads bit =
+  let baseCounts = MMap.fromList [(True, 0), (False, 0)]
+      countHeads = baseCounts <> foldMap countBit bitHeads
+      mode = modeBit countHeads
+   in bit == mode
+
+co2BitCondition :: BitCondition
+co2BitCondition bitHeads bit =
+  let countHeads = foldMap countBit bitHeads
+      mode = modeBit countHeads
+   in bit == not mode
+
+conditionRating :: BitCondition -> [[Bool]] -> Maybe [Bool]
+conditionRating bitCondition bits =
+  let filterMatches :: (a -> Bool) -> a -> b -> c -> Maybe (b, c)
+      filterMatches condition bit digits bitTails =
+        if condition bit
           then Just (digits, bitTails)
           else Nothing
-      step :: [[Bool]] -> [[Bool]] -> Int -> Maybe [[Bool]]
+      step :: [[Bool]] -> [[Bool]] -> Int -> Maybe [Bool]
       step remainingDigits remainingBits i = do
         (bitHeads, bitTails) <- List.uncons remainingBits
         let transposedTails =
               if null bitTails
                 then List.replicate (length bitHeads) []
                 else List.transpose bitTails
-        let countHeads = foldMap countBit bitHeads
-        let mode = modeBit countHeads
-        let matches = filterMatches mode <$> ZipList bitHeads <*> ZipList remainingDigits <*> ZipList (transposedTails)
+        let theseBitsCondition = bitCondition bitHeads
+        let matches = filterMatches theseBitsCondition <$> ZipList bitHeads <*> ZipList remainingDigits <*> ZipList (transposedTails)
+        let fooy = sequence . filter isJust . getZipList $ matches
+        if isNothing fooy then error "god damn it" else Just ()
         filtered <- sequence . filter isJust . getZipList $ matches
+
         let (remainingDigits', remainingBits') = unzip filtered
-        if (i < 4)
-          then
+        if length remainingDigits' == 0
+          then error (show (remainingDigits, remainingBits))
+          else
             if length remainingDigits' == 1
-              then return remainingDigits'
+              then return . head $ (remainingDigits')
               else step remainingDigits' (List.transpose remainingBits') (i + 1)
-          else return remainingDigits'
    in step bits (List.transpose bits) 0
+
+o2Rating = (fmap toInt) . conditionRating o2BitCondition
+
+co2Rating = (fmap toInt) . conditionRating co2BitCondition
 
 -- survivors <- filterMatches mode <$> ZipList bitHeads <*> ZipList bits
 -- 7
@@ -122,10 +145,14 @@ o2Rating bits =
 -- parseBinaries :: MyParser [Int]
 -- parseBinaries = many (parseBinary <* endOfLine) <* eof
 
+lifeSupportRating :: [[Bool]] -> Maybe Int
+lifeSupportRating bits =
+  (*) <$> o2Rating bits <*> co2Rating bits
+
 test :: IO ()
 test = do
   parsed <- parseStdin parseBitLists
-  let result = fmap o2Rating parsed
+  let result = fmap lifeSupportRating parsed
   print result
 
 -- print blah
