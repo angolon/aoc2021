@@ -4,11 +4,15 @@
 
 module Day6 where
 
+import qualified Data.Map.Monoidal as MMap
+import Data.Monoid (Sum (..))
 import Lib (MyParser, parseInt, parseStdin)
 import Text.Parsec
 import Text.Parsec.Char
 
-data LanternFish = LanternFish {_days :: Int} deriving (Eq, Show)
+newtype LanternFish = LanternFish {_days :: Int} deriving (Eq, Show, Ord)
+
+type Ocean = MMap.MonoidalMap LanternFish (Sum Integer)
 
 timerReset :: Int
 timerReset = 6
@@ -16,16 +20,28 @@ timerReset = 6
 newFishOffset :: Int
 newFishOffset = 2
 
-tickFish :: LanternFish -> [LanternFish]
-tickFish (LanternFish 0) = [(LanternFish timerReset), (LanternFish (timerReset + newFishOffset))]
-tickFish (LanternFish n) = [LanternFish (n - 1)]
+newFishReset :: Int
+newFishReset = timerReset + newFishOffset
 
-tickFishies :: [LanternFish] -> [LanternFish]
-tickFishies = (=<<) tickFish
+newFish :: LanternFish
+newFish = LanternFish newFishReset
 
-tickDays :: Int -> [LanternFish] -> [LanternFish]
-tickDays 0 fishies = fishies
-tickDays days fishies = tickDays (days - 1) (tickFishies fishies)
+resetFish :: LanternFish
+resetFish = LanternFish timerReset
+
+tickFishies :: LanternFish -> (Sum Integer) -> Ocean
+tickFishies (LanternFish 0) n = MMap.fromList . fmap (,n) $ [newFish, resetFish]
+tickFishies (LanternFish m) n = MMap.singleton (LanternFish (m - 1)) n
+
+tickOcean :: Ocean -> Ocean
+tickOcean = MMap.foldMapWithKey tickFishies
+
+countOcean :: Ocean -> (Sum Integer)
+countOcean = foldMap id
+
+tickDays :: Int -> Ocean -> Ocean
+tickDays 0 ocean = ocean
+tickDays days ocean = tickDays (days - 1) (tickOcean ocean)
 
 parseFish :: MyParser LanternFish
 parseFish = LanternFish <$> parseInt
@@ -33,10 +49,13 @@ parseFish = LanternFish <$> parseInt
 parseFishies :: MyParser [LanternFish]
 parseFishies = (sepBy1 parseFish $ char ',') <* endOfLine <* eof
 
+parseOcean :: MyParser Ocean
+parseOcean = foldMap (`MMap.singleton` (Sum (toInteger 1))) <$> parseFishies
+
 nDays :: Int
-nDays = 80
+nDays = 256
 
 simulateFish :: IO ()
 simulateFish = do
-  parsed <- parseStdin parseFishies
-  print $ fmap (length . tickDays nDays) parsed
+  parsed <- parseStdin parseOcean
+  print $ fmap (countOcean . tickDays nDays) parsed
