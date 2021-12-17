@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Day5 where
@@ -7,18 +8,22 @@ import Control.Arrow
 import Control.Lens
 import Control.Monad
 import qualified Data.Maybe as Maybe
+import Data.Ratio
 import qualified Data.Set as Set
 import Lib (MyParser, parseInt, parseStdin)
 import Text.Parsec
 import Text.Parsec.Char
 
-type Point = (Int, Int)
+type Dimension = Ratio Int
+
+type Point = (Dimension, Dimension)
 
 data VentLine = VentLine {_a :: Point, _b :: Point} deriving (Eq, Show)
 
 data LineEquation
-  = Horizontal {_y :: Int}
-  | Vertical {_x :: Int}
+  = Horizontal {_y :: Dimension}
+  | Vertical {_x :: Dimension}
+  | Gradient {_m :: Dimension, _c :: Dimension}
   deriving (Eq, Show)
 
 data Bound = Bound {_lower :: Point, _upper :: Point} deriving (Eq, Show)
@@ -33,6 +38,7 @@ inBound (Bound lower upper) p = lower <= p && p <= upper
 
 -- Duplicates "awesome" stuff done with arrows - could maybe make bounds
 -- representable as functions.
+-- WARNING  - is this fucked?
 boundOverlap :: Bound -> Bound -> Bound
 boundOverlap
   (Bound (x1, y1) (x2, y2))
@@ -41,12 +47,37 @@ boundOverlap
         highX = min x2 x4
         lowY = max y1 y3
         highY = min y2 y4
-     in Bound (lowX, lowY) (highX, highY)
+     in if lowX > highX || lowY > highY then error "god damn it" else Bound (lowX, lowY) (highX, highY)
+
+xToY :: Dimension -> LineEquation -> Maybe Dimension
+xToY _ (Horizontal y) = Just y
+xToY _ (Vertical _) = Nothing
+xToY x (Gradient m b) = Just $ (m * x) + b
+
+yToX :: Dimension -> LineEquation -> Maybe Dimension
+yToX _ (Horizontal _) = Nothing
+yToX _ (Vertical x) = Just x
+yToX y (Gradient m b) = Just $ (y - b) / m
 
 intersection :: LineEquation -> LineEquation -> Maybe Point
-intersection h@(Horizontal _) v@(Vertical _) = intersection v h
-intersection (Vertical x) (Horizontal y) = Just (x, y)
-intersection _ _ = Nothing
+intersection (Horizontal y) h = fmap (,y) . yToX y $ h
+intersection (Vertical x) h = fmap (x,) . xToY x $ h
+intersection g@(Gradient m b) (Gradient n c)
+  | m /= n =
+    let numerator = c - b
+        denominator = m - n
+        x = numerator / denominator
+        y = xToY x g
+     in (x,) <$> y
+  | otherwise = Nothing
+intersection g@(Gradient _ _) h = intersection h g
+
+-- intersection h@(Horizontal _) v@(Vertical _) = intersection v h
+-- intersection (Vertical x) (Horizontal y) = Just (x, y)
+-- intersection h@(Horizontal _) g@(Gradient _ _) = intersection g h
+-- intersection v@(Vertical _) g@(Gradient _ _) = intersection g v
+-- intersection (Gradient m b) (Horizontal y)
+-- intersection _ _ = Nothing
 
 data LineSegment = LineSegment {_line :: LineEquation, _bound :: Bound} deriving (Eq, Show)
 
@@ -71,13 +102,18 @@ segmentPoints :: LineSegment -> [Point]
 segmentPoints (LineSegment l b@(Bound (x1, y1) (x2, y2)))
   | (Horizontal y) <- l =
     if y1 <= y && y <= y2
-      then (flip (,) $ y) <$> [x1 .. x2]
+      then (,y) <$> [x1 .. x2]
       else []
   | (Vertical x) <- l =
     if x1 <= x && x <= x2
       then ((,) x) <$> [y1 .. y2]
       else []
-  | otherwise = []
+  | g@(Gradient _ _) <- l =
+    let xs = [x1 .. x2]
+        maybeYs = xToY <$> [x1 .. x2] <*> pure g
+        ys = sequence maybeYs
+        points = zip <$> pure xs <*> ys
+     in filter (inBound b) (join . Maybe.maybeToList $ points)
 
 segmentsDanger :: LineSegment -> LineSegment -> [Point]
 segmentsDanger ls1 ls2
@@ -88,11 +124,18 @@ segmentsDanger ls1 ls2
      in overlapPoints ++ intersection
   | otherwise = []
 
-ventLineToSegment :: VentLine -> Maybe LineSegment
+ventLineToSegment :: VentLine -> LineSegment
 ventLineToSegment (VentLine p1@(x1, y1) p2@(x2, y2))
-  | x1 == x2 = Just $ LineSegment (Vertical x1) (bound p1 p2)
-  | y1 == y2 = Just $ LineSegment (Horizontal y1) (bound p1 p2)
-  | otherwise = Nothing
+  | x1 == x2 = LineSegment (Vertical x1) (bound p1 p2)
+  | y1 == y2 = LineSegment (Horizontal y1) (bound p1 p2)
+  | otherwise =
+    let rise = y2 - y1
+        run = x2 - x1
+        m = rise / run
+        x = x1
+        y = y1
+        b = y - (m * x)
+     in LineSegment (Gradient m b) (bound p1 p2)
 
 findDanger :: [LineSegment] -> [Point]
 findDanger segments = do
@@ -105,8 +148,11 @@ countDistinct = Set.size . Set.fromList
 
 countDanger = countDistinct . findDanger
 
+parseDimension :: MyParser Dimension
+parseDimension = (% 1) <$> parseInt
+
 parsePoint :: MyParser Point
-parsePoint = (,) <$> parseInt <* spaces <* char ',' <*> parseInt
+parsePoint = (,) <$> parseDimension <* spaces <* char ',' <*> parseDimension
 
 parseVentLine :: MyParser VentLine
 parseVentLine = VentLine <$> parsePoint <* spaces <* string "->" <* spaces <*> parsePoint
@@ -122,16 +168,13 @@ parseVentLine = VentLine <$> parsePoint <* spaces <* string "->" <* spaces <*> p
 -- parseLineSegments :: MyParser [LineSegment]
 -- parseLineSegments = many1 (parseLineSegment <* endOfLine) <* eof
 
-parseLineSegment :: MyParser (Maybe LineSegment)
+parseLineSegment :: MyParser LineSegment
 parseLineSegment = ventLineToSegment <$> parseVentLine
 
-parseLineSegments :: MyParser [Maybe LineSegment]
+parseLineSegments :: MyParser [LineSegment]
 parseLineSegments = many1 (parseLineSegment <* endOfLine) <* eof
-
-flattenBullshit :: [Maybe a] -> [a]
-flattenBullshit = (=<<) Maybe.maybeToList
 
 avoidDanger :: IO ()
 avoidDanger = do
   parsed <- parseStdin (parseLineSegments)
-  print $ fmap (countDanger . flattenBullshit) parsed
+  print $ fmap (countDanger) parsed
