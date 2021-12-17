@@ -22,7 +22,7 @@ import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
 import Data.Maybe (isNothing, mapMaybe, maybeToList)
-import Data.Monoid (Sum (..), getSum)
+import Data.Monoid (Product (..), Sum (..), getProduct, getSum)
 import Data.PQueue.Min (MinQueue)
 import qualified Data.PQueue.Min as MinQueue
 import Data.Ratio
@@ -98,7 +98,7 @@ parseLengthSpecified =
         let nextPackets = packet : packets
         let col = sourceColumn pos
         if (n == col)
-          then return $ nextPackets
+          then return $ reverse nextPackets
           else go n nextPackets
    in do
         n <- nBitsToInt 15
@@ -123,9 +123,23 @@ sumVersions (Operator header ps) =
       vps = foldMap sumVersions ps
    in h + vps
 
+runPackets :: Packet -> Int
+runPackets (Literal _ i) = i
+runPackets (Operator (Header _ 0) ps) = getSum $ foldMap (Sum . runPackets) ps
+runPackets (Operator (Header _ 1) ps) = getProduct $ foldMap (Product . runPackets) ps
+runPackets (Operator (Header _ 2) ps) = minimum $ fmap runPackets ps
+runPackets (Operator (Header _ 3) ps) = maximum $ fmap runPackets ps
+runPackets (Operator (Header _ 5) (a : b : [])) =
+  if (runPackets a) > (runPackets b) then 1 else 0
+runPackets (Operator (Header _ 6) (a : b : [])) =
+  if (runPackets a) < (runPackets b) then 1 else 0
+runPackets (Operator (Header _ 7) (a : b : [])) =
+  if (runPackets a) == (runPackets b) then 1 else 0
+
 decodePackets :: IO ()
 decodePackets = do
   (Right parsedHex) <- parseStdin parseHexDigits
-  -- print parsedHex
+  print parsedHex
   let (Right packet) = runParser parsePacket () "" parsedHex
-  print $ sumVersions packet
+  print packet
+  print $ runPackets packet
