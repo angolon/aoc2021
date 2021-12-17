@@ -63,7 +63,11 @@ validatePath :: NonEmpty Cave -> Bool
 validatePath caves =
   let smalls = NonEmpty.filter isSmall caves
       grouped = NonEmpty.groupAllWith id smalls
-   in all ((== 1) . NonEmpty.length) grouped
+      counts = fmap NonEmpty.length grouped
+      questionableCounts = filter (> 1) counts
+      definiteNo = any (> 2) questionableCounts
+      nTwos = length . filter (== 2) $ questionableCounts
+   in nTwos <= 1 && not definiteNo
 
 type Path = NonEmpty Cave
 
@@ -94,5 +98,5 @@ exploreCaves :: IO ()
 exploreCaves = do
   (Right parsed) <- parseStdin parseConnections
   let paths = findPaths . groupConnections $ parsed
-  traverse_ (print . NonEmpty.reverse) paths
+  -- traverse_ (print . NonEmpty.reverse) paths
   print . length $ paths
