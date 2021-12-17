@@ -44,6 +44,37 @@ parseLine s = runParser parseChunks () "" s
 parseErrorMessage :: BrokenParser Char
 parseErrorMessage = char '\"' *> (char '}' <|> char ']' <|> char ')' <|> char '>')
 
+parseCloser :: BrokenParser Char
+parseCloser = char ')' <|> char ']' <|> char '}' <|> char '>'
+
+parseIncompleteMessage :: BrokenParser Char
+parseIncompleteMessage =
+  string "(line "
+    *> skipMany1 digit
+    *> string ", column "
+    *> skipMany1 digit
+    *> string "):\nunexpected end of input\nexpecting \"(\", \"[\", \"{\", \"<\" or \""
+    *> parseCloser
+
+fixIncomplete :: String -> String
+fixIncomplete s =
+  let go suffix (Right _) = suffix
+      go suffix (Left e) =
+        let m = show e
+            (Right c) = runParser parseIncompleteMessage () "" m
+            nextSuffix = suffix ++ [c]
+         in go nextSuffix (parseLine (s ++ nextSuffix))
+   in go "" (parseLine s)
+
+scoreFix :: String -> Int
+scoreFix s =
+  let score c = case c of
+        ')' -> 1
+        ']' -> 2
+        '}' -> 3
+        '>' -> 4
+   in foldl' (\accum c -> (5 * accum) + (score c)) 0 s
+
 interpretErrors :: [ParseError] -> Int
 interpretErrors errors =
   let getErrorChar e =
@@ -57,15 +88,20 @@ interpretErrors errors =
         _ -> 0
    in sum . fmap (scoreErrorChar . getErrorChar) $ errors
 
-doThing :: [Either ParseError String] -> Int
+doThing :: [String] -> Int
 doThing ls =
-  let (failures, _) = partitionEithers ls
-   in interpretErrors failures
+  let parsedLines = fmap parseLine ls
+      (failures, _) = partitionEithers parsedLines
+      zipped = zip failures ls -- they all fail, by design
+      isIncomplete (e, _) = List.isInfixOf "end of input" . show $ e
+      eofFailures = filter isIncomplete zipped
+      (_, incompleteLines) = unzip eofFailures
+      scores = List.sort $ fmap (scoreFix . fixIncomplete) incompleteLines
+      middle = (length scores) `div` 2
+   in head . drop middle $ scores
 
 scoreErrors :: IO ()
 scoreErrors = do
   input <- getContents
   let ls = lines input
-  let parsedLines = fmap parseLine ls
-  print parsedLines
-  print $ doThing parsedLines
+  print $ doThing ls

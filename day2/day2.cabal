@@ -26,6 +26,7 @@ source-repository head
 library
   exposed-modules:
       Day10
+      Day11
       Day3
       Day4
       Day5
