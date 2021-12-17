@@ -20,6 +20,8 @@ import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
 import Data.Maybe (isNothing, mapMaybe, maybeToList)
 import Data.Monoid (Sum (..), getSum)
+import Data.PQueue.Min (MinQueue)
+import qualified Data.PQueue.Min as MinQueue
 import Data.Ratio
 import Data.Set (Set, union, (\\))
 import qualified Data.Set as Set
@@ -68,101 +70,90 @@ enlargeCave cave@(Cave width height riskLevels) =
       height' = ((height + 1) * 5) - 1
    in Cave width' height' $ Map.fromList expanded
 
-type Path = [(Int, Int)]
+data Path = Path {cave :: Cave, steps :: [(Int, Int)]} deriving (Eq, Show)
+
+instance Ord Path where
+  compare p1 p2 =
+    let dist = arr distanceToTarget
+        weight = arr pathRisk
+        cmp = weight &&& dist
+     in compare (cmp p1) (cmp p2)
+
+emptyPath :: Cave -> Path
+emptyPath cave = Path cave []
+
+pathEnd :: Path -> (Int, Int)
+pathEnd = head . steps
+
+-- Paths are reverse order, so ignore the first element because we don't
+-- "enter" (0,0)
+pathRisk :: Path -> Int
+pathRisk (Path (Cave _ _ c) path) = getSum $ foldMap (Sum . (c !)) (init path)
 
 target :: Cave -> (Int, Int)
 target c = ((width c), (height c))
 
-distanceToTarget :: Cave -> (Int, Int) -> Int
-distanceToTarget c (x, y) =
-  let (targetX, targetY) = target c
+distanceToTarget :: Path -> Int
+distanceToTarget (Path cave ((x, y) : _)) =
+  let (targetX, targetY) = target cave
    in (targetY - y) + (targetX - x)
-
--- Paths are reverse order, so ignore the first element because we don't
--- "enter" (0,0)
-pathRisk :: Cave -> Path -> Int
-pathRisk (Cave _ _ c) path = getSum $ foldMap (Sum . (c !)) (init path)
 
 adjacent :: (Int, Int) -> [(Int, Int)]
 adjacent (x, y) = [((x - 1), y), ((x + 1), y), (x, (y - 1)), (x, (y + 1))]
 
 -- Prioritises exploration by least risk?
-step :: Cave -> Set (Int, Int) -> Path -> ((Set (Int, Int)), [Path])
-step _ _ [] = ((Set.singleton (0, 0)), ([[(0, 0)]]))
-step cave@(Cave width height riskLevels) visited path@(coord : tail)
-  | coord == (width, height) = (visited, [path])
+step :: Set (Int, Int) -> Path -> ((Set (Int, Int)), MinQueue Path)
+step _ (Path cave []) = ((Set.singleton (0, 0)), (MinQueue.singleton $ Path cave [(0, 0)]))
+step visited (Path cave@(Cave width height riskLevels) path@(coord : tail))
+  | coord == (width, height) = (visited, MinQueue.singleton $ Path cave path)
   | otherwise =
     let validCoord coord@(x, y) = x >= 0 && x <= width && y >= 0 && y <= height && (not . Set.member coord $ visited)
         adj = filter validCoord $ adjacent coord
         expanded = (: coord : tail) <$> adj
-        sorted = List.sortOn (pathRisk cave) expanded
+        queue = MinQueue.fromList (Path cave <$> expanded)
         nextVisited = visited `union` (Set.fromList adj)
-     in (nextVisited, sorted)
+     in (nextVisited, queue)
 
-trimPaths :: Cave -> [Path] -> [Path]
-trimPaths cave paths =
-  -- filter any redundant paths which intersect with some other endpoint
-  let groupedByEndPoint = NonEmpty.groupAllWith head paths
-      deduped = fmap (minimumBy (compare `on` (pathRisk cave))) groupedByEndPoint
-      dist = arr distanceToTarget cave . head
-      weight = arr pathRisk cave
-   in -- noRedundant = filter (all (not . (`Set.member` endPoints)) . tail) deduped
-      -- noRedundant =
-      --   filter
-      --     ( \p ->
-      --         let riskP = pathRisk cave p
-      --          in all
-      --               ( \q ->
-      --                   let end = head p
-      --                       q' = dropWhile (/= end) q
-      --                       riskQ = pathRisk cave q'
-      --                    in p == q || null q' || riskP < riskQ
-      --               )
-      --               deduped
-      --     )
-      --     deduped
-      -- List.sortOn (dist &&& weight) deduped
-      List.sortOn (weight &&& dist) deduped
+-- trimPaths :: Cave -> [Path] -> [Path]
+-- trimPaths cave paths =
+--   -- filter any redundant paths which intersect with some other endpoint
+--   let groupedByEndPoint = NonEmpty.groupAllWith head paths
+--       deduped = fmap (minimumBy (compare `on` (pathRisk cave))) groupedByEndPoint
+--       dist = arr distanceToTarget cave . head
+--       weight = arr pathRisk cave
+--    in -- noRedundant = filter (all (not . (`Set.member` endPoints)) . tail) deduped
+--       -- noRedundant =
+--       --   filter
+--       --     ( \p ->
+--       --         let riskP = pathRisk cave p
+--       --          in all
+--       --               ( \q ->
+--       --                   let end = head p
+--       --                       q' = dropWhile (/= end) q
+--       --                       riskQ = pathRisk cave q'
+--       --                    in p == q || null q' || riskP < riskQ
+--       --               )
+--       --               deduped
+--       --     )
+--       --     deduped
+--       -- List.sortOn (dist &&& weight) deduped
+--       List.sortOn (weight &&& dist) deduped
 
 findSafePath :: Cave -> IO Path
 findSafePath cave@(Cave width height _) =
-  let go :: Set (Int, Int) -> [Path] -> IO Path
-      go _ [] = go (Set.singleton (0, 0)) ([(0, 0) : []])
-      go visited pps@(p : ps)
-        | head p == (width, height) = print p >> return p
-        | otherwise =
-          let (nextVisited, nextPaths) =
-                foldl'
-                  ( \(vs, paths) path ->
-                      -- don't filter on the accumulated visited straight
-                      -- away, as this will cut out more efficient paths.
-                      let (nextVisited, extraPaths) = step cave visited path
-                       in ((vs `union` nextVisited), (extraPaths ++ paths))
-                  )
-                  (visited, [])
-                  pps
-              trimmed = trimPaths cave nextPaths
-           in go nextVisited trimmed
-   in go Set.empty []
+  let go :: Set (Int, Int) -> MinQueue Path -> IO Path
+      go visited paths =
+        case MinQueue.minView paths of
+          Nothing -> go (Set.singleton (0, 0)) (MinQueue.singleton $ Path cave [(0, 0)])
+          Just (p, ps)
+            | pathEnd p == (width, height) -> print p >> return p
+            | otherwise ->
+              let (nextVisited, nextPaths) = step visited p
+                  -- hax = print $ (fmap steps $ MinQueue.take 3 nextPaths)
+                  hax = print $ Set.size nextVisited
+               in hax >> (go nextVisited $ MinQueue.union nextPaths ps)
+   in go Set.empty MinQueue.empty
 
-cheapestPathTo :: Cave -> Set (Int, Int) -> (Int, Int) -> Maybe Path
-cheapestPathTo _ _ (0, 0) = Just [(0, 0)]
-cheapestPathTo cave@(Cave width height riskLevels) visited coord =
-  let validCoord (x, y) = x >= 0 && x <= width && y >= 0 && y <= height
-      adj = filter (not . flip Set.member visited) . filter validCoord $ adjacent coord
-      nextVisited = Set.union visited $ Set.fromList adj
-      parentPaths = mapMaybe (cheapestPathTo cave nextVisited) adj
-   in case parentPaths of
-        [] -> Nothing
-        _ ->
-          let best = minimumBy (compare `on` (pathRisk cave)) parentPaths
-           in Just $ coord : best
-
---              hax = List.sortOn (pathRisk cave) $ deduped
-
--- | otherwise =
---   let betterBranch = step cave p
---    in go betterBranch
 findPath :: IO ()
 findPath = do
   parsed <- parseStdin parsePuzzle
@@ -172,7 +163,7 @@ findPath = do
   let foo = (,49) <$> [0 .. 49]
   let blah = riskLevels cave
   print $ fmap (blah !) foo
-  print $ pathRisk cave p
+  print $ pathRisk p
 
 -- print (step cave =<< step cave =<< step cave =<< step cave [])
 
