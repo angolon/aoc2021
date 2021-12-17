@@ -29,6 +29,18 @@ bound (x1, y1) (x2, y2) =
 inBound :: Bound -> Point -> Bool
 inBound (Bound lower upper) p = lower <= p && p <= upper
 
+-- Duplicates "awesome" stuff done with arrows - could maybe make bounds
+-- representable as functions.
+boundOverlap :: Bound -> Bound -> Bound
+boundOverlap
+  (Bound (x1, y1) (x2, y2))
+  (Bound (x3, y3) (x4, y4)) =
+    let lowX = max x1 x3
+        highX = min x2 x4
+        lowY = max y1 y3
+        highY = min y2 y4
+     in Bound (lowX, lowY) (highX, highY)
+
 intersection :: LineEquation -> LineEquation -> Maybe Point
 intersection h@(Horizontal _) v@(Vertical _) = intersection v h
 intersection (Vertical x) (Horizontal y) = Just (x, y)
@@ -45,6 +57,25 @@ segmentIntersection
     let inBothArr = arr inBound b1 &&& arr inBound b2
         inBoth = allOf both id . inBothArr
      in mfilter inBoth (intersection l1 l2)
+
+segmentOverlap :: LineSegment -> LineSegment -> Maybe LineSegment
+segmentOverlap
+  (LineSegment l1 b1)
+  (LineSegment l2 b2)
+    | l1 == l2 = Just (LineSegment l1 (boundOverlap b1 b2))
+    | otherwise = Nothing
+
+segmentPoints :: LineSegment -> [Point]
+segmentPoints (LineSegment l b@(Bound (x1, y1) (x2, y2)))
+  | (Horizontal y) <- l =
+    if y1 <= y && y <= y2
+      then (flip (,) $ y) <$> [x1 .. x2]
+      else []
+  | (Vertical x) <- l =
+    if x1 <= x && x <= x2
+      then ((,) x) <$> [y1 .. y2]
+      else []
+  | otherwise = []
 
 parsePoint :: MyParser Point
 parsePoint = (,) <$> parseInt <* spaces <* char ',' <*> parseInt
