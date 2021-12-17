@@ -1,6 +1,6 @@
 module Main where
 
-import Day12 (exploreCaves)
+import Day13 (foldOrigami)
 
 main :: IO ()
-main = exploreCaves
+main = foldOrigami
