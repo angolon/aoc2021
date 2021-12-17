@@ -1,6 +1,6 @@
 module Main where
 
-import Day15 (findPath)
+import Day16 (decodePackets)
 
 main :: IO ()
-main = findPath
+main = decodePackets
