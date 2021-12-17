@@ -1,6 +1,6 @@
 module Main where
 
-import Day7 (escapeWhale)
+import Day8 (descrambleDisplays)
 
 main :: IO ()
-main = escapeWhale
+main = descrambleDisplays

@@ -30,7 +30,9 @@ library
       Day5
       Day6
       Day7
+      Day8
       Lib
+      SevenSegment
   other-modules:
       Paths_day2
   hs-source-dirs:
