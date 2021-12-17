@@ -4,6 +4,7 @@
 
 module Day9 where
 
+import Control.Monad.Reader
 import Data.Foldable
 import qualified Data.List as List
 import Data.Maybe (maybeToList)
@@ -71,7 +72,10 @@ allLowPoints m =
 
 allLowHeights :: HeightMap -> [Int]
 allLowHeights m =
-  let maybePoints = fmap (uncurry (heightLookup m)) $ allLowPoints m
+  let maybePoints = do
+        lowPoints <- reader allLowPoints
+        f <- reader heightLookup
+        fmap (uncurry f) lowPoints
    in maybeToList =<< maybePoints
 
 allBasinSizes :: HeightMap -> [Int]
