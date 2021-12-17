@@ -6,6 +6,8 @@ module Day5 where
 import Control.Arrow
 import Control.Lens
 import Control.Monad
+import qualified Data.Maybe as Maybe
+import qualified Data.Set as Set
 import Lib (MyParser, parseInt, parseStdin)
 import Text.Parsec
 import Text.Parsec.Char
@@ -77,16 +79,50 @@ segmentPoints (LineSegment l b@(Bound (x1, y1) (x2, y2)))
       else []
   | otherwise = []
 
+segmentsDanger :: LineSegment -> LineSegment -> [Point]
+segmentsDanger ls1 ls2
+  | ls1 /= ls2 =
+    let intersection = Maybe.maybeToList $ segmentIntersection ls1 ls2
+        overlap = segmentOverlap ls1 ls2
+        overlapPoints = segmentPoints =<< (Maybe.maybeToList overlap)
+     in overlapPoints ++ intersection
+  | otherwise = []
+
+ventLineToSegment :: VentLine -> Maybe LineSegment
+ventLineToSegment (VentLine p1@(x1, y1) p2@(x2, y2))
+  | x1 == x2 = Just $ LineSegment (Vertical x1) (bound p1 p2)
+  | y1 == y2 = Just $ LineSegment (Horizontal y1) (bound p1 p2)
+  | otherwise = Nothing
+
+findDanger :: [LineSegment] -> [Point]
+findDanger segments = do
+  s1 <- segments
+  s2 <- segments
+  segmentsDanger s1 s2
+
+countDistinct :: (Ord a) => [a] -> Int
+countDistinct = Set.size . Set.fromList
+
+countDanger = countDistinct . findDanger
+
 parsePoint :: MyParser Point
 parsePoint = (,) <$> parseInt <* spaces <* char ',' <*> parseInt
 
 parseVentLine :: MyParser VentLine
 parseVentLine = VentLine <$> parsePoint <* spaces <* string "->" <* spaces <*> parsePoint
 
-parseVentLines :: MyParser [VentLine]
-parseVentLines = many1 (parseVentLine <* endOfLine) <* eof
+parseLineSegment :: MyParser LineSegment
+parseLineSegment = do
+  ventLine <- parseVentLine
+  let segment = ventLineToSegment ventLine
+  case segment of
+    Just s -> return s
+    Nothing -> parserFail $ "Invalid line segment: " ++ (show ventLine)
+
+parseLineSegments :: MyParser [LineSegment]
+parseLineSegments = many1 (parseLineSegment <* endOfLine) <* eof
 
 avoidDanger :: IO ()
 avoidDanger = do
-  parsed <- parseStdin parseVentLines
-  print parsed
+  parsed <- parseStdin parseLineSegments
+  print $ fmap countDanger parsed
