@@ -1,6 +1,6 @@
 module Main where
 
-import Day3 (test)
+import Day4 (playBingo)
 
 main :: IO ()
-main = test
+main = playBingo

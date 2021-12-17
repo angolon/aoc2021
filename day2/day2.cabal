@@ -26,6 +26,7 @@ source-repository head
 library
   exposed-modules:
       Day3
+      Day4
       Lib
   other-modules:
       Paths_day2
