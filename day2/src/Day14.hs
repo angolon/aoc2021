@@ -14,6 +14,8 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
+import Data.Map.Monoidal (MonoidalMap)
+import qualified Data.Map.Monoidal as MMap
 import Data.Maybe (isNothing, maybeToList)
 import Data.Monoid (Sum (..), getSum)
 import Data.Set (Set, (\\))
@@ -46,29 +48,46 @@ sliding2 f as =
   let zippedBs = f <$> (ZipList as) <*> (ZipList (drop 1 as))
    in getZipList zippedBs
 
-insertElements :: Map (Char, Char) Char -> String -> String
-insertElements rules s =
-  let insert a b = (a, (rules ! (a, b)), b)
-      inserted = sliding2 insert s
-      smooth ((a, b, c) : []) = [a, b, c]
-      smooth ((a, b, c) : ds) = [a, b] ++ smooth ds
-      smooth [] = ""
-   in smooth inserted
+type Digraphs = MonoidalMap (Char, Char) (Sum Integer)
 
-synthesizeN :: Map (Char, Char) Char -> Int -> String -> String
+buildDigraphs :: String -> Digraphs
+buildDigraphs s =
+  let dgs = sliding2 (,) s
+      dg1s = fmap (,(Sum 1)) dgs
+   in foldMap (uncurry MMap.singleton) dg1s
+
+insertElements :: Map (Char, Char) Char -> Digraphs -> Digraphs
+insertElements rules digraphs =
+  let insertElement digraph@(a, b) count =
+        let c = rules ! digraph
+         in MMap.fromList [((a, c), count), ((c, b), count)]
+      additions = MMap.foldMapWithKey insertElement digraphs
+   in additions
+
+synthesizeN :: Map (Char, Char) Char -> Int -> Digraphs -> Digraphs
 synthesizeN _ 0 s = s
 synthesizeN rules n s = synthesizeN rules (n - 1) (insertElements rules s)
 
-finalizePolymer :: String -> Int
-finalizePolymer s =
-  let grouped = NonEmpty.groupAllWith id s
-      counts = fmap NonEmpty.length grouped
-      max = maximum counts
-      min = minimum counts
-   in max - min
+printMap :: (Show k, Show a) => MonoidalMap k a -> IO ()
+printMap m = MMap.traverseWithKey (\k a -> print (k, a)) m >>= (\_ -> return ())
+
+finalizePolymer :: String -> Digraphs -> Integer
+finalizePolymer s digraphs =
+  let cs = MMap.foldMapWithKey (\(a, _) count -> MMap.singleton a count) digraphs
+      ds = MMap.foldMapWithKey (\(_, b) count -> MMap.singleton b count) digraphs
+      initial = MMap.singleton (head s) (Sum 1)
+      fin = MMap.singleton (last s) (Sum 1)
+      characters = cs <> ds <> initial <> fin
+      max = (getSum $ maximum characters) `div` 2
+      min = (getSum $ minimum characters) `div` 2
+      r = max - min
+   in r
 
 synthesizePolymer :: IO ()
 synthesizePolymer = do
   parsed <- parseStdin parsePuzzle
   let (Right (template, rules)) = parsed
-  print . finalizePolymer $ (synthesizeN rules 10 template)
+  let digraphs = buildDigraphs template
+  -- (MMap.traverseWithKey (\k a -> print (k, a)) (synthesizeN rules 10 digraphs))
+  -- return ()
+  print . finalizePolymer template $ (synthesizeN rules 40 digraphs)
