@@ -70,6 +70,9 @@ finalise pos =
   let (Product result) = pos ^. ((horizontal . toProduct) <> (depth . toProduct))
    in result
 
+parseInt :: MyParser Int
+parseInt = fmap (read @Int) (many1 digit)
+
 parseStdin :: MyParser a -> IO (Either ParseError a)
 parseStdin p = getContents >>= runParserT p () ""
 

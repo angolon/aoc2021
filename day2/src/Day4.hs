@@ -9,7 +9,7 @@ import Data.Bifunctor.Swap
 import Data.Either
 import Data.Function (on)
 import qualified Data.List as List
-import Lib (MyParser, parseStdin)
+import Lib (MyParser, parseInt, parseStdin)
 import Text.Parsec
 import Text.Parsec.Char
 
@@ -72,30 +72,40 @@ data Game = Game {_numbers :: [Int], _boards :: [Board]} deriving (Show, Eq)
 
 makeLenses ''Game
 
--- Find the board that wins in the fewest called numbers
-playGame :: Game -> Either String (Int, Board)
-playGame (Game ns boards) = do
+type BoardSelector = [(Int, Board)] -> (Int, Board)
+
+selectBest :: BoardSelector
+selectBest = List.minimumBy (compare `on` fst)
+
+selectWorst :: BoardSelector
+selectWorst = List.maximumBy (compare `on` fst)
+
+-- Find the board that wins according to the selector strategy
+playGame :: BoardSelector -> Game -> Either String (Int, Board)
+playGame selector (Game ns boards) = do
   winners <-
     first (\_ -> "Didn't find any winners")
       . sequence
       . filter isRight
       . fmap (swap . playNumbers ns) -- swap winners back to the right so we can sequence with them
       $ boards
-  let bestWinner = List.minimumBy (compare `on` fst) winners
-  return bestWinner
+  return (selector winners)
 
 scoreWinner :: Game -> Int -> Board -> Int
 scoreWinner (Game ns _) nMoves (Board rows) =
   let unmarkedSum = sumOf (folded . folded . _Left) rows
    in unmarkedSum * (ns !! nMoves)
 
-playToWin :: Game -> Either String Int
-playToWin game = do
-  winner <- playGame game
+playThenScore :: BoardSelector -> Game -> Either String Int
+playThenScore selector game = do
+  winner <- playGame selector game
   return (uncurry (scoreWinner game) $ winner)
 
-parseInt :: MyParser Int
-parseInt = fmap (read @Int) (many1 digit)
+playToWin :: Game -> Either String Int
+playToWin = playThenScore selectBest
+
+playToLose :: Game -> Either String Int
+playToLose = playThenScore selectWorst
 
 parseNumbers :: MyParser [Int]
 parseNumbers = sepBy1 parseInt (char ',')
@@ -118,4 +128,4 @@ parseGame = Game <$> parseNumbers <*> parseBoards
 playBingo :: IO ()
 playBingo = do
   game <- parseStdin parseGame
-  print (fmap playToWin game)
+  print (fmap playToLose game)
