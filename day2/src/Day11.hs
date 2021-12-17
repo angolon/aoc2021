@@ -95,7 +95,13 @@ steps n octopi =
          in go (n - 1) (accum + nFlashed) nextOctopi
    in go n 0 octopi
 
+findSynchronizationPoint :: Octopi -> Maybe Int
+findSynchronizationPoint octopi =
+  let n = Map.size octopi
+      simulation = List.iterate (step . snd) (0, octopi)
+   in List.findIndex ((== n) . fst) simulation
+
 observeOctopi :: IO ()
 observeOctopi = do
   parsed <- parseStdin parseOctopi
-  print $ fmap (steps 100) parsed
+  print $ fmap (findSynchronizationPoint) parsed
