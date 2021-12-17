@@ -111,18 +111,27 @@ parsePoint = (,) <$> parseInt <* spaces <* char ',' <*> parseInt
 parseVentLine :: MyParser VentLine
 parseVentLine = VentLine <$> parsePoint <* spaces <* string "->" <* spaces <*> parsePoint
 
-parseLineSegment :: MyParser LineSegment
-parseLineSegment = do
-  ventLine <- parseVentLine
-  let segment = ventLineToSegment ventLine
-  case segment of
-    Just s -> return s
-    Nothing -> parserFail $ "Invalid line segment: " ++ (show ventLine)
+-- parseLineSegment :: MyParser LineSegment
+-- parseLineSegment = do
+--   ventLine <- parseVentLine
+--   let segment = ventLineToSegment ventLine
+--   case segment of
+--     Just s -> return s
+--     Nothing -> parserFail $ "Invalid line segment: " ++ (show ventLine)
 
-parseLineSegments :: MyParser [LineSegment]
+-- parseLineSegments :: MyParser [LineSegment]
+-- parseLineSegments = many1 (parseLineSegment <* endOfLine) <* eof
+
+parseLineSegment :: MyParser (Maybe LineSegment)
+parseLineSegment = ventLineToSegment <$> parseVentLine
+
+parseLineSegments :: MyParser [Maybe LineSegment]
 parseLineSegments = many1 (parseLineSegment <* endOfLine) <* eof
+
+flattenBullshit :: [Maybe a] -> [a]
+flattenBullshit = (=<<) Maybe.maybeToList
 
 avoidDanger :: IO ()
 avoidDanger = do
-  parsed <- parseStdin parseLineSegments
-  print $ fmap countDanger parsed
+  parsed <- parseStdin (parseLineSegments)
+  print $ fmap (countDanger . flattenBullshit) parsed
