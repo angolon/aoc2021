@@ -47,6 +47,26 @@ puzzleToCave risks =
       riskLevels = Map.fromList $ fmap coordToRisk coords
    in Cave x y riskLevels
 
+enlargeCave :: Cave -> Cave
+enlargeCave cave@(Cave width height riskLevels) =
+  let initial = Map.toList riskLevels
+      increaseRisk n i =
+        let j = i + n
+         in if j > 9 then j - 9 else j
+      increaseX x i = (i * (width + 1)) + x
+      increaseY y i = (i * (height + 1)) + y
+      expanded = do
+        ((x, y), r) <- initial
+        a <- [0 .. 4]
+        b <- [0 .. 4]
+        let r' = increaseRisk (a + b) r
+        let x' = increaseX x a
+        let y' = increaseY y b
+        return ((x', y'), r')
+      width' = ((width + 1) * 5) - 1
+      height' = ((height + 1) * 5) - 1
+   in Cave width' height' $ Map.fromList expanded
+
 type Path = [(Int, Int)]
 
 target :: Cave -> (Int, Int)
@@ -118,9 +138,12 @@ cheapestPathTo cave@(Cave width height riskLevels) visited coord =
 findPath :: IO ()
 findPath = do
   parsed <- parseStdin parsePuzzle
-  let (Right cave) = fmap puzzleToCave parsed
+  let (Right cave) = fmap (enlargeCave . puzzleToCave) parsed
   -- print (cheapestPathTo cave (Set.singleton (2, 2)) (2, 2))
   p <- findSafePath cave
+  let foo = (,49) <$> [0 .. 49]
+  let blah = riskLevels cave
+  print $ fmap (blah !) foo
   print $ pathRisk cave p
 
 -- print (step cave =<< step cave =<< step cave =<< step cave [])
