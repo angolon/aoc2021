@@ -12,7 +12,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (isNothing, maybeToList)
 import Data.Monoid (Sum (..), getSum)
-import Data.Set (Set)
+import Data.Set (Set, (\\))
 import qualified Data.Set as Set
 import Data.Vector ((!?))
 import qualified Data.Vector as V
@@ -25,7 +25,7 @@ newtype Octopus = Octopus {_charge :: Maybe Int} deriving (Eq, Show)
 
 makeLenses ''Octopus
 
-type Octopi = (V.Vector (V.Vector (Octopus)))
+type Octopi = Map (Int, Int) Octopus
 
 parseOctopus :: MyParser (Octopus)
 parseOctopus = Octopus . Just . read @Int . (: []) <$> digit
@@ -33,33 +33,69 @@ parseOctopus = Octopus . Just . read @Int . (: []) <$> digit
 parseOctopi :: MyParser Octopi
 parseOctopi =
   let parseLine = V.fromList <$> many1 parseOctopus
-   in V.fromList <$> sepEndBy1 parseLine endOfLine <* eof
+      ls = V.fromList <$> sepEndBy1 parseLine endOfLine <* eof
+      tupleIndexed :: V.Vector (V.Vector Octopus) -> V.Vector ((Int, Int), Octopus)
+      tupleIndexed octopi = do
+        (x, ys) <- V.indexed octopi
+        (y, octopus) <- V.indexed ys
+        return ((x, y), octopus)
+   in Map.fromList . V.toList . tupleIndexed <$> ls
 
 incrementCharge :: Maybe Int -> Maybe Int
 incrementCharge = mfilter (<= 9) . (fmap (+ 1))
 
+chargeOctopus :: Octopus -> Octopus
+chargeOctopus = charge %~ incrementCharge
+
 chargeOctopi :: Octopi -> Octopi
-chargeOctopi = mapped . mapped . charge %~ incrementCharge
+chargeOctopi = mapped %~ chargeOctopus
 
-adjacentIndicies :: (Int, Int) -> Set (Int, Int)
-adjacentIndicies (x, y) = Set.fromList ((,) <$> [(x - 1) .. (x + 1)] <*> [(y -1) .. (y + 1)])
+resetOctopus :: Octopus -> Octopus
+resetOctopus = charge .~ Just 0
 
-findChargedIndices :: Octopi -> [(Int, (V.Vector Int))]
+resetOctopi :: Octopi -> Octopi
+resetOctopi = mapped . charge . filtered (isNothing) .~ Just 0
+
+adjacentIndices :: (Int, Int) -> Set (Int, Int)
+adjacentIndices (x, y) = Set.fromList ((,) <$> [(x - 1) .. (x + 1)] <*> [(y -1) .. (y + 1)])
+
+findChargedIndices :: Octopi -> Set (Int, Int)
 findChargedIndices octopi =
-  let withOuterIndices = octopi ^.. ifolded . withIndex
-      charged (i, os) = (i,) $ V.findIndices (isNothing . _charge) os
-   in fmap charged withOuterIndices
+  let charged = octopi ^.. (ifolded . withIndex . filtered (isNothing . _charge . snd) . _1)
+   in Set.fromList charged
 
-chainReaction :: Octopi -> Octopi
+flashIndex :: Octopi -> (Int, Int) -> Octopi
+flashIndex octopi index =
+  let adjacent = adjacentIndices index
+   in over (imapped . (indices (flip Set.member $ adjacent))) chargeOctopus $ octopi
+
+chainReaction :: Octopi -> ((Set (Int, Int)), Octopi)
 chainReaction octopi =
-  let is = findChargedIndices octopi
-      outerIs :: [Int]
-      (outerIs, _) = unzip is
-      -- unsure if `imapped` is the right function here
-      res = over (imapped . (indices (flip elem $ outerIs))) id $ V.toList octopi
-   in V.fromList res
+  let go flashedIndices octopi =
+        let chargedIndices = findChargedIndices octopi
+            toFlash = chargedIndices \\ flashedIndices
+            nextOctopi = foldl' flashIndex octopi toFlash
+         in if nextOctopi == octopi
+              then (chargedIndices, nextOctopi)
+              else go chargedIndices nextOctopi
+   in go Set.empty octopi
+
+step :: Octopi -> (Int, Octopi)
+step octopi =
+  let charged = chargeOctopi octopi
+      (flashedIndices, flashedOctopi) = chainReaction charged
+      nFlashed = Set.size flashedIndices
+   in (nFlashed, resetOctopi flashedOctopi)
+
+steps :: Int -> Octopi -> (Int, Octopi)
+steps n octopi =
+  let go 0 accum octopi = (accum, octopi)
+      go n accum octopi =
+        let (nFlashed, nextOctopi) = step octopi
+         in go (n - 1) (accum + nFlashed) nextOctopi
+   in go n 0 octopi
 
 observeOctopi :: IO ()
 observeOctopi = do
   parsed <- parseStdin parseOctopi
-  print $ fmap chargeOctopi parsed
+  print $ fmap (steps 100) parsed
