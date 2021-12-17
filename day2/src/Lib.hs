@@ -18,6 +18,7 @@ module Lib where
 import Control.Lens
 import Control.Monad.Free
 import Data.Foldable (foldl')
+import Data.Monoid (Product (..))
 import Text.Parsec
 import Text.Parsec.Char
 
@@ -62,8 +63,12 @@ move pos (Down a) = pos & aim +~ a
 runMoves :: [Move] -> Position
 runMoves moves = foldl' move (Position 0 0 0) moves
 
+toProduct = to Product
+
 finalise :: Position -> Int
-finalise (Position _ x y) = x * y
+finalise pos =
+  let (Product result) = pos ^. ((horizontal . toProduct) <> (depth . toProduct))
+   in result
 
 runMovesStdin :: IO ()
 runMovesStdin = do
