@@ -45,7 +45,8 @@ parseMoves :: MyParser [Move]
 parseMoves = many parseMove <* eof
 
 data Position = Position
-  { _horizontal :: Int,
+  { _aim :: Int,
+    _horizontal :: Int,
     _depth :: Int
   }
   deriving (Show, Eq)
@@ -53,15 +54,16 @@ data Position = Position
 makeLenses ''Position
 
 move :: Position -> Move -> Position
-move pos (Forward a) = pos & horizontal +~ a
-move pos (Up a) = pos & depth -~ a
-move pos (Down a) = pos & depth +~ a
+move pos (Forward a) =
+  pos & horizontal +~ a & depth +~ (a * (view aim pos))
+move pos (Up a) = pos & aim -~ a
+move pos (Down a) = pos & aim +~ a
 
 runMoves :: [Move] -> Position
-runMoves moves = foldl' move (Position 0 0) moves
+runMoves moves = foldl' move (Position 0 0 0) moves
 
 finalise :: Position -> Int
-finalise (Position x y) = x * y
+finalise (Position _ x y) = x * y
 
 runMovesStdin :: IO ()
 runMovesStdin = do
