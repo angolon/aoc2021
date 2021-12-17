@@ -5,6 +5,7 @@
 module Day9 where
 
 import Data.Foldable
+import qualified Data.List as List
 import Data.Maybe (maybeToList)
 import Data.Monoid (Sum (..), getSum)
 import Data.Set (Set)
@@ -43,24 +44,21 @@ isLowPoint m x y =
 
 expandBasin :: HeightMap -> Int -> Int -> Int
 expandBasin m x y =
-  let go :: Set (Int, Int, Int) -> Int -> [(Int, Int, Int)] -> Int
-      go visited accum ((adjacentHeight, x, y) : coords) =
-        if Set.member (adjacentHeight, x, y) visited
+  let go :: Set (Int, Int) -> Int -> [(Int, Int)] -> Int
+      go visited accum ((x, y) : coords) =
+        if Set.member (x, y) visited
           then go visited accum coords
           else
             let height = heightLookup m x y
+                nextSet = Set.insert (x, y) visited
              in case height of
                   Just (h)
-                    | h > adjacentHeight && h < 9 ->
-                      let nextCoords = fmap (\(x1, y1) -> (h, x1, y1)) $ adjacentPoints x y
-                          nextSet = Set.insert (adjacentHeight, x, y) visited
+                    | h < 9 ->
+                      let nextCoords = adjacentPoints x y
                        in go nextSet (accum + 1) (nextCoords ++ coords)
-                    | otherwise ->
-                      let nextSet = Set.insert (adjacentHeight, x, y) visited
-                       in go nextSet accum coords
                   _ -> go visited accum coords
       go _ accum [] = accum
-   in go Set.empty 0 [(-1, x, y)] -- filthy hacks
+   in go Set.empty 0 [(x, y)]
 
 allLowPoints :: HeightMap -> [(Int, Int)]
 allLowPoints m =
@@ -79,10 +77,13 @@ allLowHeights m =
 allBasinSizes :: HeightMap -> [Int]
 allBasinSizes m = fmap (uncurry (expandBasin m)) $ allLowPoints m
 
+bestBasinSizes :: HeightMap -> Int
+bestBasinSizes = product . take 3 . reverse . List.sort . allBasinSizes
+
 riskLevel :: HeightMap -> Int
 riskLevel = sum . map (+ 1) . allLowHeights
 
 assessRisk :: IO ()
 assessRisk = do
   parsed <- parseStdin parseHeightMap
-  print $ fmap allBasinSizes parsed
+  print $ fmap bestBasinSizes parsed
