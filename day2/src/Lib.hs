@@ -70,9 +70,11 @@ finalise pos =
   let (Product result) = pos ^. ((horizontal . toProduct) <> (depth . toProduct))
    in result
 
+parseStdin :: MyParser a -> IO (Either ParseError a)
+parseStdin p = getContents >>= runParserT p () ""
+
 runMovesStdin :: IO ()
 runMovesStdin = do
-  input <- getContents
-  parsed <- runParserT parseMoves () "" input
+  parsed <- parseStdin parseMoves
   let result = (finalise . runMoves) <$> parsed
   print result
