@@ -116,8 +116,16 @@ parseOperator = do
     then parseNSpecified
     else parseLengthSpecified
 
+sumVersions :: Packet -> Sum Int
+sumVersions (Literal header _) = Sum $ version header
+sumVersions (Operator header ps) =
+  let h = Sum $ version header
+      vps = foldMap sumVersions ps
+   in h + vps
+
 decodePackets :: IO ()
 decodePackets = do
   (Right parsedHex) <- parseStdin parseHexDigits
-  print parsedHex
-  print $ runParser parsePacket () "" parsedHex
+  -- print parsedHex
+  let (Right packet) = runParser parsePacket () "" parsedHex
+  print $ sumVersions packet
