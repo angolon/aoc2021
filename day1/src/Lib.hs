@@ -9,7 +9,7 @@ where
 import Control.Applicative
 import Control.Comonad
 import qualified Data.List.NonEmpty as NE
-import Data.Monoid (Sum)
+import Data.Monoid (Sum (..))
 
 parseInput :: (Read a) => String -> [a]
 parseInput = (fmap read) . lines
@@ -45,6 +45,5 @@ increases :: IO ()
 increases = do
   input <- getContents
   let xs = (parseInput @Int) input
-  -- let c = countIncreases . sumWindows3 $ (fmap Sum xs)
-  let c = countIncreases xs
+  let c = countIncreases . sumWindows3 $ (fmap Sum xs)
   print c
