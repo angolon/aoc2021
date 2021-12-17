@@ -1,6 +1,6 @@
 module Main where
 
-import Day14 (synthesizePolymer)
+import Day15 (findPath)
 
 main :: IO ()
-main = synthesizePolymer
+main = findPath
