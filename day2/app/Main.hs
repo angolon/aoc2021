@@ -1,6 +1,6 @@
 module Main where
 
-import Day9 (assessRisk)
+import Day10 (scoreErrors)
 
 main :: IO ()
-main = assessRisk
+main = scoreErrors
