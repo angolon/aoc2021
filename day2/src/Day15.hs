@@ -14,7 +14,7 @@ import Data.Function (on)
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Map (Map, (!))
+import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
@@ -25,14 +25,17 @@ import qualified Data.PQueue.Min as MinQueue
 import Data.Ratio
 import Data.Set (Set, union, (\\))
 import qualified Data.Set as Set
-import Data.Vector ((!?))
+import Data.Vector ((!), (!?))
 import qualified Data.Vector as V
 import GHC.Generics
 import Lib (MyParser, parseInt, parseStdin)
 import Text.Parsec
 import Text.Parsec.Char
 
-data Cave = Cave {width :: Int, height :: Int, riskLevels :: Map (Int, Int) Int} deriving (Show, Eq)
+data Cave = Cave {width :: Int, height :: Int, riskLevels :: V.Vector (V.Vector Int)} deriving (Show, Eq)
+
+riskLookup :: V.Vector (V.Vector Int) -> (Int, Int) -> Int
+riskLookup rss (x, y) = rss ! x ! y
 
 parsePuzzle :: MyParser [[Int]]
 parsePuzzle = sepEndBy1 parseLine endOfLine <* eof
@@ -47,28 +50,30 @@ puzzleToCave risks =
       coords = (,) <$> [0 .. x] <*> [0 .. y]
       lookup (x, y) = risks !! y !! x
       coordToRisk coord = (coord, lookup coord)
-      riskLevels = Map.fromList $ fmap coordToRisk coords
+      riskLevels = V.fromList $ fmap V.fromList (List.transpose risks)
    in Cave x y riskLevels
 
 enlargeCave :: Cave -> Cave
 enlargeCave cave@(Cave width height riskLevels) =
-  let initial = Map.toList riskLevels
-      increaseRisk n i =
+  let increaseRisk n i =
         let j = i + n
          in if j > 9 then j - 9 else j
       increaseX x i = (i * (width + 1)) + x
       increaseY y i = (i * (height + 1)) + y
-      expanded = do
-        ((x, y), r) <- initial
-        a <- [0 .. 4]
-        b <- [0 .. 4]
+      expandColumn b column = do
+        a <- V.fromList [0 .. 4]
+        r <- column
         let r' = increaseRisk (a + b) r
-        let x' = increaseX x a
-        let y' = increaseY y b
-        return ((x', y'), r')
+        return r'
+
+      expanded = do
+        b <- V.fromList [0 .. 4]
+        column <- riskLevels
+        return $ expandColumn b column
+
       width' = ((width + 1) * 5) - 1
       height' = ((height + 1) * 5) - 1
-   in Cave width' height' $ Map.fromList expanded
+   in Cave width' height' expanded
 
 data Path = Path {cave :: Cave, steps :: [(Int, Int)]} deriving (Eq, Show)
 
@@ -88,7 +93,7 @@ pathEnd = head . steps
 -- Paths are reverse order, so ignore the first element because we don't
 -- "enter" (0,0)
 pathRisk :: Path -> Int
-pathRisk (Path (Cave _ _ c) path) = getSum $ foldMap (Sum . (c !)) (init path)
+pathRisk (Path (Cave _ _ c) path) = getSum $ foldMap (Sum . riskLookup c) (init path)
 
 target :: Cave -> (Int, Int)
 target c = ((width c), (height c))
@@ -162,7 +167,7 @@ findPath = do
   p <- findSafePath cave
   let foo = (,49) <$> [0 .. 49]
   let blah = riskLevels cave
-  print $ fmap (blah !) foo
+  print $ fmap (riskLookup blah) foo
   print $ pathRisk p
 
 -- print (step cave =<< step cave =<< step cave =<< step cave [])
