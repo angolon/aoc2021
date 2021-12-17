@@ -32,6 +32,7 @@ library
       src
   build-depends:
       base >=4.7 && <5
+    , comonad >=5.0.8 && <6
   default-language: Haskell2010
 
 executable day1-exe
@@ -43,6 +44,7 @@ executable day1-exe
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , comonad >=5.0.8 && <6
     , day1
   default-language: Haskell2010
 
@@ -56,5 +58,6 @@ test-suite day1-test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , comonad >=5.0.8 && <6
     , day1
   default-language: Haskell2010
