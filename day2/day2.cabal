@@ -53,6 +53,7 @@ library
     , monoidal-containers >=0.6.1 && <1
     , parsec >=3.1.14.0 && <4
     , pqueue >=1.4.1.3 && <2
+    , unordered-containers >=0.2.15.0 && <1
     , vector >=0.12.3.1 && <1
   default-language: Haskell2010
 
@@ -73,6 +74,7 @@ executable day2-exe
     , monoidal-containers >=0.6.1 && <1
     , parsec >=3.1.14.0 && <4
     , pqueue >=1.4.1.3 && <2
+    , unordered-containers >=0.2.15.0 && <1
     , vector >=0.12.3.1 && <1
   default-language: Haskell2010
 
@@ -94,5 +96,6 @@ test-suite day2-test
     , monoidal-containers >=0.6.1 && <1
     , parsec >=3.1.14.0 && <4
     , pqueue >=1.4.1.3 && <2
+    , unordered-containers >=0.2.15.0 && <1
     , vector >=0.12.3.1 && <1
   default-language: Haskell2010
