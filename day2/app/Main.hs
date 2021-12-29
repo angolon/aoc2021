@@ -1,6 +1,6 @@
 module Main where
 
-import Day21 (playWithDice)
+import Day22 (rebootReactor)
 
 main :: IO ()
-main = playWithDice
+main = rebootReactor

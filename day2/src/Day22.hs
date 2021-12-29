@@ -40,14 +40,6 @@ import Text.Parsec
 import Text.Parsec.Char
 import Text.Show.Functions
 
--- data Cuboid = Cuboid
---   { _activated :: Bool,
---     _xs :: (Int, Int),
---     _ys :: (Int, Int),
---     _zs :: (Int, Int)
---   }
---   deriving (Eq, Show)
-
 data Action = On | Off deriving (Show, Eq)
 
 data DimensionSegment = DimensionSegment
@@ -238,21 +230,57 @@ n3SectionOverwrite
         maybeAllQuadrants = generateQuadrants <$> xsOverwrite <*> ysOverwrite <*> zsOverwrite
      in join . maybeToList $ maybeAllQuadrants
 
--- in mergeN3Sections allQuadrants
+cuboidOverwrite :: Cuboid -> Cuboid -> [Cuboid]
+cuboidOverwrite
+  prior@(Cuboid priorState priorN3)
+  next@(Cuboid _ nextN3) =
+    let overwritten = n3SectionOverwrite priorN3 nextN3
+     in case overwritten of
+          [] -> [prior] -- preserve the prior cuboid if it wasn't effected by the overwrite
+          _ -> fmap (Cuboid priorState) overwritten
 
-planeSectionXY :: N3Section -> PlaneSection
-planeSectionXY c = PlaneSection (c ^. xs) (c ^. ys)
+combineCuboids :: [Cuboid] -> [Cuboid]
+combineCuboids (c : []) = [c]
+combineCuboids (c1 : cns) =
+  let go existingCuboids [] = existingCuboids
+      go existingCuboids (cuboid : tail) =
+        let nextExisting = existingCuboids >>= (`cuboidOverwrite` cuboid)
+         in go (cuboid : nextExisting) tail
+   in go [c1] cns
 
-planeSectionXZ :: N3Section -> PlaneSection
-planeSectionXZ c = PlaneSection (c ^. xs) (c ^. zs)
+segmentLength :: DimensionSegment -> Int
+segmentLength (DimensionSegment a b) = 1 + (abs (b - a))
 
-planeSectionYZ :: N3Section -> PlaneSection
-planeSectionYZ c = PlaneSection (c ^. ys) (c ^. zs)
+volume :: Cuboid -> Int
+volume (Cuboid _ (N3Section xs ys zs)) =
+  (segmentLength xs) * (segmentLength ys) * (segmentLength zs)
 
-addCuboids :: Cuboid -> Cuboid -> [Cuboid]
-addCuboids c1 c2 =
-  if
-      | (c1 ^. section) == (c2 ^. section) -> [c2] -- take rhs state
-      | otherwise -> error "blah"
+combinedOnVolume :: [Cuboid] -> Int
+combinedOnVolume =
+  sum . fmap volume . filter ((== On) . _activated) . combineCuboids
+
+parseCuboid :: MyParser Cuboid
+parseCuboid =
+  let parseDimensionSegment = DimensionSegment <$> parseInt <* string ".." <*> parseInt
+      parseN3Section =
+        N3Section <$ string "x=" <*> parseDimensionSegment
+          <* string ",y=" <*> parseDimensionSegment
+          <* string ",z=" <*> parseDimensionSegment
+      parseOn = const On <$> try (string "on")
+      parseOff = const Off <$> try (string "off")
+      parseAction = parseOn <|> parseOff
+   in Cuboid <$> parseAction <* space <*> parseN3Section
+
+parsePuzzle :: MyParser [Cuboid]
+parsePuzzle = sepEndBy1 parseCuboid endOfLine <* eof
+
+rebootReactor :: IO ()
+rebootReactor = do
+  (Right puzzle) <- parseStdin parsePuzzle
+  -- traverse_ print puzzle
+  -- print . combinedOnVolume $ (take 2 puzzle)
+  -- let blah = filter ((== On) . _activated) . combineCuboids $ puzzle
+  let blah = combineCuboids $ take 2 puzzle
+  traverse_ print blah
 
 -- intersection :: Cuboid -> Cuboid -> Maybe Cuboid
