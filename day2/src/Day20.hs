@@ -165,11 +165,14 @@ printImage img =
           else return '.'
    in traverse_ (putStrLn . fmtRow) [bounds ^. minY .. bounds ^. maxY]
 
+iterations = 50
+
 zoomAndEnhance :: IO ()
 zoomAndEnhance = do
   (Right (alg, img)) <- parseStdin parsePuzzle
-  let algEnhance = enhance alg
-  let enhanced = algEnhance . algEnhance $ img
+  let algEnhance = Endo $ enhance alg
+  let iteratedAlgorithm = appEndo . fold . replicate iterations $ algEnhance
+  let enhanced = iteratedAlgorithm img
   printImage enhanced
   print $ enhanced ^. knownBounds
   print $ Set.size (enhanced ^. litPixels)
