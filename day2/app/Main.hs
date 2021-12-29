@@ -1,6 +1,6 @@
 module Main where
 
-import Day16 (decodePackets)
+import Day17 (launchProbe)
 
 main :: IO ()
-main = decodePackets
+main = launchProbe
