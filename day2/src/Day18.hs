@@ -148,26 +148,36 @@ reduceStep sna =
       splitted = goSplit [] sna
    in exploded `justOr` splitted -- thank god for laziness
 
-reduceSnailNum :: SnailNum Int -> IO (SnailNum Int)
+reduceSnailNum :: SnailNum Int -> SnailNum Int
 reduceSnailNum sna =
   case reduceStep sna of
-    Just snb -> print snb >> reduceSnailNum snb
-    _ -> return sna
+    Just snb -> reduceSnailNum snb
+    _ -> sna
 
-appendSnailNum :: SnailNum Int -> SnailNum Int -> IO (SnailNum Int)
+appendSnailNum :: SnailNum Int -> SnailNum Int -> SnailNum Int
 appendSnailNum l r = reduceSnailNum (Fork l r)
 
-sumSnailNums :: [SnailNum Int] -> IO (SnailNum Int)
+sumSnailNums :: [SnailNum Int] -> SnailNum Int
 sumSnailNums [] = error "nope"
-sumSnailNums (n : ns) = foldl' (\l r -> l >>= (`appendSnailNum` r)) (return n) ns
+sumSnailNums (n : ns) = foldl' appendSnailNum n ns
 
 magnitude :: SnailNum Int -> Int
 magnitude (Terminal a) = a
 magnitude (Fork l r) = ((3 *) . magnitude $ l) + ((2 *) . magnitude $ r)
 
+largestMagnitude :: [SnailNum Int] -> Int
+largestMagnitude ns =
+  let combinations = do
+        n <- ns
+        m <- ns
+        guard (m /= n)
+        return $ appendSnailNum n m
+      magnitudes = fmap magnitude combinations
+   in maximum magnitudes
+
 doMathsHomework :: IO ()
 doMathsHomework = do
   (Right parsed) <- parseStdin parseSnailNums
-  n <- sumSnailNums parsed
+  let n = sumSnailNums parsed
   print n
-  print $ magnitude n
+  print $ largestMagnitude parsed
