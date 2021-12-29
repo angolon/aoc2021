@@ -1,6 +1,6 @@
 module Main where
 
-import Day17 (launchProbe)
+import Day18 (doMathsHomework)
 
 main :: IO ()
-main = launchProbe
+main = doMathsHomework
