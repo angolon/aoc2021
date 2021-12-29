@@ -85,7 +85,25 @@ unit_n3OverwriteHalf =
       c1 = N3Section s1 s1 s1
       c2 = N3Section (DimensionSegment 4 6) (DimensionSegment 0 8) (DimensionSegment 0 8)
       expectedCube = N3Section (DimensionSegment 2 3) s1 s1
-   in c1 `n3SectionOverwrite` c2 `shouldBe` [expectedCube]
+   in c1 `n3SectionOverwrite` c2 `shouldBe` Just [expectedCube]
+
+unit_mergeN3Sections =
+  let sections =
+        [ N3Section (DimensionSegment 10 10) (DimensionSegment 11 12) (DimensionSegment 11 12),
+          N3Section (DimensionSegment 11 12) (DimensionSegment 10 10) (DimensionSegment 11 12),
+          N3Section (DimensionSegment 11 12) (DimensionSegment 11 12) (DimensionSegment 10 10),
+          N3Section (DimensionSegment 10 10) (DimensionSegment 10 10) (DimensionSegment 11 12),
+          N3Section (DimensionSegment 10 10) (DimensionSegment 10 10) (DimensionSegment 10 10),
+          N3Section (DimensionSegment 10 10) (DimensionSegment 11 12) (DimensionSegment 10 10),
+          N3Section (DimensionSegment 11 12) (DimensionSegment 10 10) (DimensionSegment 10 10)
+        ]
+      expectedSections =
+        [ N3Section (DimensionSegment 10 12) (DimensionSegment 11 12) (DimensionSegment 10 10),
+          N3Section (DimensionSegment 11 12) (DimensionSegment 10 10) (DimensionSegment 10 12),
+          N3Section (DimensionSegment 10 10) (DimensionSegment 10 12) (DimensionSegment 11 12),
+          N3Section (DimensionSegment 10 10) (DimensionSegment 10 10) (DimensionSegment 10 10)
+        ]
+   in mergeN3Sections sections `shouldBe` expectedSections
 
 -- unit_n3OverwriteCorner =
 --   let priorAllD = DimensionSegment 0 4

@@ -97,6 +97,14 @@ dimensionIntersect
               upper = min previousUpper nextUpper
            in Just $ DimensionSegment lower upper
 
+dContains :: DimensionSegment -> DimensionSegment -> Bool
+dContains (DimensionSegment lmin lmax) (DimensionSegment rmin rmax) =
+  (rmin >= lmin) && (rmax <= lmax)
+
+n3Contains :: N3Section -> N3Section -> Bool
+n3Contains (N3Section lxs lys lzs) (N3Section rxs rys rzs) =
+  (lxs `dContains` rxs) && (lys `dContains` rys) && (lzs `dContains` rzs)
+
 dimensionOverwrite ::
   DimensionSegment ->
   DimensionSegment ->
@@ -131,6 +139,8 @@ n3Points (N3Section xs ys zs) = do
 n3SectionMerge :: N3Section -> N3Section -> Maybe N3Section
 n3SectionMerge left@(N3Section lxs lys lzs) right@(N3Section rxs rys rzs)
   | left == right = Just left
+  | left `n3Contains` right = Just left
+  | right `n3Contains` left = Just right
   | lxs == rxs && lys == rys = N3Section lxs lys <$> dimensionMerge lzs rzs
   | lxs == rxs && lzs == rzs = N3Section lxs <$> dimensionMerge lys rys <*> pure lzs
   | lys == rys && lzs == rzs = N3Section <$> dimensionMerge lxs rxs <*> pure lys <*> pure lzs
@@ -152,7 +162,7 @@ mergeN3Sections sections =
            in mergeN3Sections $ merged : unmerged
         Nothing -> sections -- No mergeable sections
 
-n3SectionOverwrite :: N3Section -> N3Section -> [N3Section]
+n3SectionOverwrite :: N3Section -> N3Section -> Maybe [N3Section]
 n3SectionOverwrite
   prior@(N3Section priorXs priorYs priorZs)
   next@(N3Section nextXs nextYs nextZs) =
@@ -228,7 +238,7 @@ n3SectionOverwrite
            in mergeN3Sections allQuadrants
         -- in error . show $ mergeN3Sections allQuadrants
         maybeAllQuadrants = generateQuadrants <$> xsOverwrite <*> ysOverwrite <*> zsOverwrite
-     in join . maybeToList $ maybeAllQuadrants
+     in maybeAllQuadrants
 
 cuboidOverwrite :: Cuboid -> Cuboid -> [Cuboid]
 cuboidOverwrite
@@ -236,8 +246,9 @@ cuboidOverwrite
   next@(Cuboid _ nextN3) =
     let overwritten = n3SectionOverwrite priorN3 nextN3
      in case overwritten of
-          [] -> [prior] -- preserve the prior cuboid if it wasn't effected by the overwrite
-          _ -> fmap (Cuboid priorState) overwritten
+          Just [] -> [] -- preserve the prior cuboid if it wasn't effected by the overwrite
+          Just splits -> fmap (Cuboid priorState) splits
+          Nothing -> [prior] -- preserve the prior cuboid if it wasn't effected by the overwrite
 
 combineCuboids :: [Cuboid] -> [Cuboid]
 combineCuboids (c : []) = [c]
@@ -245,7 +256,12 @@ combineCuboids (c1 : cns) =
   let go existingCuboids [] = existingCuboids
       go existingCuboids (cuboid : tail) =
         let nextExisting = existingCuboids >>= (`cuboidOverwrite` cuboid)
-         in go (cuboid : nextExisting) tail
+            points = (n3Points . _section) =<< nextExisting
+            pointsSet = Set.fromList points
+            pointsAreDistinct = (length points) == (Set.size pointsSet)
+         in if pointsAreDistinct
+              then go (cuboid : nextExisting) tail
+              else error $ "problem at " ++ (show cuboid)
    in go [c1] cns
 
 segmentLength :: DimensionSegment -> Int
@@ -278,9 +294,10 @@ rebootReactor :: IO ()
 rebootReactor = do
   (Right puzzle) <- parseStdin parsePuzzle
   -- traverse_ print puzzle
-  -- print . combinedOnVolume $ (take 2 puzzle)
+  -- print . combinedOnVolume $ (take 4 puzzle)
   -- let blah = filter ((== On) . _activated) . combineCuboids $ puzzle
-  let blah = combineCuboids $ take 2 puzzle
-  traverse_ print blah
+  let blah = combineCuboids puzzle
+  -- traverse_ print blah
+  print . combinedOnVolume $ puzzle
 
 -- intersection :: Cuboid -> Cuboid -> Maybe Cuboid
