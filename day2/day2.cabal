@@ -35,6 +35,7 @@ library
       Day17
       Day18
       Day19
+      Day20
       Day3
       Day4
       Day5
@@ -91,6 +92,7 @@ test-suite day2-test
   main-is: Driver.hs
   other-modules:
       Day19Spec
+      Day20Spec
       Paths_day2
   hs-source-dirs:
       test

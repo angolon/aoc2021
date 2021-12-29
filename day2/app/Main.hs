@@ -1,6 +1,6 @@
 module Main where
 
-import Day19 (orientateScanners)
+import Day20 (zoomAndEnhance)
 
 main :: IO ()
-main = orientateScanners
+main = zoomAndEnhance
