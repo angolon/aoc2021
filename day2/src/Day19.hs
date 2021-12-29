@@ -153,24 +153,29 @@ mostCommonDistance vs us =
 -- (so long as the number of common points exceeds some threshold (12 by default)
 threshold = 12
 
-lFst = view (_1)
+data RelativeScanners = RelativeScanners
+  { _from :: Scanner,
+    _to :: Scanner,
+    _distance :: V3 Int,
+    _orientation :: FacingOrientation
+  }
+  deriving (Eq, Show)
 
-lSnd = view (_2)
+makeLenses ''RelativeScanners
 
-lFstSnd = arr lFst &&& arr lSnd
-
-findCommonBeacons :: Scanner -> Scanner -> Maybe (FacingOrientation, V3 Int)
-findCommonBeacons (Scanner _ referenceFrame) (Scanner _ freeScanner) =
+areRelative :: Scanner -> Scanner -> Maybe RelativeScanners
+areRelative fixed@(Scanner _ referenceFrame) free@(Scanner _ freeBeacons) =
   let mostCommonForFO facingOrientation =
-        let reoriented = fmap (facingOrientation ^. reorient) freeScanner
+        let reoriented = fmap (facingOrientation ^. reorient) freeBeacons
             best@(dist, common) = mostCommonDistance referenceFrame reoriented
             len = V.length common
          in if len >= threshold
               then Just (facingOrientation, dist, len)
               else Nothing
       allBest = fmap mostCommonForFO allFacingOrientations
-      winner = maximumByOf (folded . _Just) (compare `on` (view _3)) allBest
-   in lFstSnd <$> winner
+   in do
+        (orientation, dist, _) <- maximumByOf (folded . _Just) (compare `on` (view _3)) allBest
+        return $ RelativeScanners fixed free dist orientation
 
 justOr (Just a) _ = Just a
 justOr _ b = b
@@ -192,19 +197,24 @@ recurseLookup m targetKey k1 =
          in if isJust terminalKA then composed else listToMaybe recurse
    in go (MMap.lookup k1 m) Nothing Set.empty
 
-findAllCommon scanners =
+findAllRelative :: [Scanner] -> MonoidalMap Int [RelativeScanners]
+findAllRelative scanners =
   let combinations = do
-        -- todo: filter out redundant permutations - if your inversion
-        -- logic works at all we shouldn't need them.
         l@(Scanner lid _) <- scanners
         r@(Scanner rid _) <- scanners
-        -- don't accidentally put cycles in your recursive map lookup thingy
         guard $ lid > rid
-        (facingOrientation, dist) <- maybeToList $ findCommonBeacons l r
-        -- let orientL = Endo $ (+ dist) . _reorient facingOrientation
-        -- let orientR = Endo $ (\a -> a - dist) . invert facingOrientation
-        let orientL = Endo $ invert facingOrientation . (\a -> a - dist)
-        let orientR = Endo $ (+ dist) . _reorient facingOrientation
+        relative <- maybeToList $ areRelative l r
+        return $ MMap.singleton lid [relative]
+   in fold combinations
+
+findAllCommon scanners =
+  let combinations = do
+        relations <- MMap.elems $ findAllRelative scanners
+        (RelativeScanners from to dist orientation) <- relations
+        let lid = from ^. identifier
+        let rid = to ^. identifier
+        let orientL = Endo $ invert orientation . subtract dist
+        let orientR = Endo $ (+ dist) . _reorient orientation
         let lm = MMap.singleton lid [(rid, orientL)]
         let rm = MMap.singleton rid [(lid, orientR)]
         return $ lm <> rm
@@ -234,13 +244,64 @@ findAllCommon scanners =
           lookup
         return $ referenceSet <> reorientedTails
 
+findLargestDistance :: [Scanner] -> IO (Maybe Int)
+findLargestDistance scanners@(reference : rest) =
+  let combinations = do
+        relations <- MMap.elems $ findAllRelative scanners
+        (RelativeScanners from to dist orientation) <- relations
+        let lid = from ^. identifier
+        let rid = to ^. identifier
+        let orientL = Endo $ invert orientation . subtract dist
+        let orientR = Endo $ (+ dist) . _reorient orientation
+        let lm = MMap.singleton lid [(rid, orientL)]
+        let rm = MMap.singleton rid [(lid, orientR)]
+        return $ lm <> rm
+      lookup = fold combinations
+      referenceFrame = (head scanners)
+      origin = V3 0 0 0
+      reorientateOrigin (Scanner id beacons) =
+        let fixer =
+              recurseLookup
+                lookup
+                (referenceFrame ^. identifier)
+                id
+            jFixer =
+              if (isJust fixer)
+                then fromJust fixer
+                else error "missing link in chain"
+         in appEndo jFixer origin
+      reorientedTails = fmap reorientateOrigin $ tail scanners
+      scannerCoords = origin : reorientedTails
+      manhattanMagnitude = getSum . foldMap (Sum . abs)
+      distances = do
+        v1 <- scannerCoords
+        v2 <- scannerCoords
+        guard $ v1 > v2
+        let dist = v1 - v2
+        return $ manhattanMagnitude dist
+   in do
+        MMap.traverseWithKey
+          ( \k a ->
+              let as = fmap fst a
+               in print (k, as)
+          )
+          lookup
+        return $ maximumOf traversed distances
+
+-- lookup = fold combinations
+-- distances = relations ^.. (traversed . traversed . distance)
+-- manhattanDistances = distances & mapped %~ getSum . foldMap (Sum . abs)
+-- in maximumOf traversed manhattanDistances
+
 orientateScanners :: IO ()
 orientateScanners = do
   (Right parsed) <- parseStdin parseScanners
   -- let blah = findCommonBeacons (head parsed) (parsed !! 1)
   -- print blah
   -- let blah = findAllCommon $ take 2 parsed
-  blah <- findAllCommon parsed
-  traverse_ print blah
-  print $ Set.size blah
+  -- blah <- findAllCommon parsed
+  -- traverse_ print blah
+  -- print $ Set.size blah
+  d <- findLargestDistance parsed
+  print d
   return ()
