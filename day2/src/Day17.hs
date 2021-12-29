@@ -70,20 +70,17 @@ pastBound (minX, maxX) (minY, maxY) probe =
       yy = probe ^. (position . positionV . y)
    in xx > maxX || yy < minY
 
+inBound :: (Int, Int) -> (Int, Int) -> ProbeState -> Bool
+inBound (minX, maxX) (minY, maxY) probe =
+  let px = probe ^. (position . positionV . x)
+      py = probe ^. (position . positionV . y)
+   in minX <= px && px <= maxX
+        && minY <= py
+        && py <= maxY
+
 stepsUntilTarget :: (Int, Int) -> (Int, Int) -> ProbeState -> [ProbeState]
 stepsUntilTarget targetX@(minX, maxX) targetY@(minY, maxY) init =
-  let px probe = probe ^. (position . positionV . x)
-      py probe = probe ^. (position . positionV . y)
-      inBound probe =
-        let x = px probe
-            y = py probe
-         in minX <= x && x <= maxX
-              && minY <= y
-              && y <= maxY
-      -- path = take 10 (steps init)
-      path = takeWhile (not . pastBound targetX targetY) (steps init)
-      onTarget = inBound . last $ path
-   in path
+  takeWhile (not . pastBound targetX targetY) (steps init)
 
 -- in if onTarget then Just path else Nothing
 
@@ -125,13 +122,30 @@ calculateOptimalTrajectory xBounds@(minX, maxX) yBounds@(minY, maxY) =
         otherwise -> error "couldn't solve x velocity"
    in if vx > timeToKill then error "blargh" else Velocity (Vector vx vy)
 
+allValidTrajectories :: (Int, Int) -> (Int, Int) -> [Velocity]
+allValidTrajectories xBounds@(_, maxX) yBounds@(minY, _) =
+  let (Velocity (Vector minXV maxYV)) = calculateOptimalTrajectory xBounds yBounds
+      minYV = minY
+      maxXV = maxX
+      initialVs = (,) <$> [minXV .. maxXV] <*> [minYV .. maxYV]
+      initialProbes = fmap initialProbeVelocity initialVs
+      paths = fmap (stepsUntilTarget xBounds yBounds) initialProbes
+      pathInBound = inBound xBounds yBounds
+      validPaths = filter (pathInBound . last) paths
+   in fmap (_velocity . head) validPaths
+
+trickShot :: (Int, Int) -> (Int, Int) -> Maybe Int
+trickShot targetX targetY =
+  let optimal = calculateOptimalTrajectory targetX targetY
+      init = ProbeState (Position (Vector 0 0)) optimal
+      ps = stepsUntilTarget targetX targetY init
+   in maximumOf (traverse . position . positionV . y) ps
+
 launchProbe :: IO ()
 launchProbe =
-  let targetX = (207, 263)
+  let -- targetX = (20, 30)
+      -- targetY = (-10, -5)
+      targetX = (207, 263)
       targetY = (-115, -63)
-      optimal = calculateOptimalTrajectory targetX targetY
-      highestY =
-        let init = ProbeState (Position (Vector 0 0)) optimal
-            ps = stepsUntilTarget targetX targetY init
-         in maximumOf (traverse . position . positionV . y) ps
-   in print highestY
+      trajectories = allValidTrajectories targetX targetY
+   in print $ length trajectories
