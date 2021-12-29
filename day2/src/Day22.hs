@@ -256,12 +256,7 @@ combineCuboids (c1 : cns) =
   let go existingCuboids [] = existingCuboids
       go existingCuboids (cuboid : tail) =
         let nextExisting = existingCuboids >>= (`cuboidOverwrite` cuboid)
-            points = (n3Points . _section) =<< nextExisting
-            pointsSet = Set.fromList points
-            pointsAreDistinct = (length points) == (Set.size pointsSet)
-         in if pointsAreDistinct
-              then go (cuboid : nextExisting) tail
-              else error $ "problem at " ++ (show cuboid)
+         in go (cuboid : nextExisting) tail
    in go [c1] cns
 
 segmentLength :: DimensionSegment -> Int
