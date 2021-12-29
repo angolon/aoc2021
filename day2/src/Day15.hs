@@ -58,8 +58,6 @@ enlargeCave cave@(Cave width height riskLevels) =
   let increaseRisk n i =
         let j = i + n
          in if j > 9 then j - 9 else j
-      increaseX x i = (i * (width + 1)) + x
-      increaseY y i = (i * (height + 1)) + y
       expandColumn b column = do
         a <- V.fromList [0 .. 4]
         r <- column
