@@ -34,7 +34,11 @@ import Text.Parsec.Char
 data SnailNum a
   = Terminal {_value :: a}
   | Fork {_left :: (SnailNum a), _right :: (SnailNum a)}
-  deriving (Eq, Show)
+  deriving (Eq)
+
+instance (Show a) => Show (SnailNum a) where
+  show (Terminal a) = show a
+  show (Fork l r) = "[" ++ show l ++ "," ++ show r ++ "]"
 
 makeLenses ''SnailNum
 
@@ -115,7 +119,7 @@ reduceStep sna =
         let (Just parent@(Fork l r)) = root ^? (pathToLens path1)
          in if l == node
               then
-                let path' = downRight r (right : path2)
+                let path' = downLeft r (right : path2)
                     updated = root & ((pathToLens path') . value) +~ n
                  in Just updated
               else updateRightSibling root parent n path1 path2
@@ -126,7 +130,7 @@ reduceStep sna =
         let (Just parent@(Fork l r)) = root ^? (pathToLens path1)
          in if r == node
               then
-                let path' = downLeft l (left : path2)
+                let path' = downRight l (left : path2)
                     updated = root & ((pathToLens path') . value) +~ n
                  in Just updated
               else updateLeftSibling root parent n path1 path2
