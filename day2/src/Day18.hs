@@ -161,8 +161,13 @@ sumSnailNums :: [SnailNum Int] -> IO (SnailNum Int)
 sumSnailNums [] = error "nope"
 sumSnailNums (n : ns) = foldl' (\l r -> l >>= (`appendSnailNum` r)) (return n) ns
 
+magnitude :: SnailNum Int -> Int
+magnitude (Terminal a) = a
+magnitude (Fork l r) = ((3 *) . magnitude $ l) + ((2 *) . magnitude $ r)
+
 doMathsHomework :: IO ()
 doMathsHomework = do
   (Right parsed) <- parseStdin parseSnailNums
   n <- sumSnailNums parsed
   print n
+  print $ magnitude n
