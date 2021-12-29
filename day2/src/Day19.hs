@@ -1,10 +1,12 @@
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Day19 where
 
+import Control.Arrow (arr, (&&&))
 import Control.Lens
 import Control.Monad
 import Data.Either (either)
@@ -24,7 +26,6 @@ import qualified Data.PQueue.Min as MinQueue
 import Data.Ratio
 import Data.Set (Set, union, (\\))
 import qualified Data.Set as Set
-import Data.Vector ((!), (!?))
 import qualified Data.Vector as V
 import Lib (MyParser, parseStdin)
 import Linear.Metric (dot)
@@ -84,23 +85,40 @@ angleBetween v1 v2 =
 --          (rotate roll-β yawed-y-axis)
 --          )))
 --
-
-planeAlign planeNormal v =
-  let xyProjection = planeNormal & _z .~ 0
+--
+yawAngle normal =
+  let xyProjection = normal & _z .~ 0
       yawAngle =
         if (sum xyProjection) /= 0
           then angleBetween xAxis xyProjection
           else 0.0 -- no yaw needed
           -- Offset the angle by 2π if the rotation should be more than π radians
-      yawα = if (planeNormal ^. _y) <= 0 then yawAngle else (2 * pi) - yawAngle
-      yawQ = Q.axisAngle zAxis yawα
-      yawedXAxis = Q.rotate yawQ xAxis
-      rollAngle = angleBetween yawedXAxis planeNormal
+   in if (normal ^. _y) <= 0 then yawAngle else (2 * pi) - yawAngle
+
+yawAxis = zAxis
+
+rollAngleAxis normal yawAngle =
+  let yawQ = Q.axisAngle yawAxis yawAngle
+      yawedX = Q.rotate yawQ xAxis
+      rollAngle = angleBetween yawedX normal
       -- Offset again by 2π
-      rollβ = if (planeNormal ^. _z) <= 0 then rollAngle else (2 * pi) - rollAngle
-      yawedYAxis = Q.rotate yawQ yAxis
-      rollQ = Q.axisAngle yawedYAxis rollβ
-   in Q.rotate rollQ . Q.rotate yawQ $ v
+      rollβ = if (normal ^. _z) <= 0 then rollAngle else (2 * pi) - rollAngle
+      rollAxis = Q.rotate yawQ yAxis
+   in (rollβ, rollAxis)
+
+planeAlign planeNormal =
+  let yawα = yawAngle planeNormal
+      (rollβ, rollAxis) = rollAngleAxis planeNormal yawα
+      yawQ = Q.axisAngle yawAxis yawα
+      rollQ = Q.axisAngle rollAxis rollβ
+   in Q.rotate rollQ . Q.rotate yawQ
+
+invertPlaneAlign normal =
+  let yawα = yawAngle normal
+      (rollβ, rollAxis) = rollAngleAxis normal yawα
+      invertRollQ = Q.axisAngle rollAxis (- rollβ)
+      invertYawQ = Q.axisAngle yawAxis (- yawα)
+   in Q.rotate invertYawQ . Q.rotate invertRollQ
 
 orientations = [0, pi / 2, pi, pi * (3 / 2)]
 
@@ -111,6 +129,7 @@ planes =
    in posNeg _x ++ posNeg _y ++ posNeg _z
 
 data FacingOrientation = FacingOrientation {_normal :: V3 Int, _α :: Double}
+  deriving (Eq, Show)
 
 _reorient :: FacingOrientation -> V3 Int -> V3 Int
 _reorient (FacingOrientation normal α) =
@@ -121,6 +140,13 @@ _reorient (FacingOrientation normal α) =
 
 reorient :: Getter FacingOrientation (V3 Int -> V3 Int)
 reorient = to _reorient
+
+invert :: FacingOrientation -> V3 Int -> V3 Int
+invert (FacingOrientation normal α) =
+  let dNormal :: V3 Double
+      dNormal = fmap fromIntegral normal
+      q = Q.axisAngle dNormal (- α)
+   in fmap round . invertPlaneAlign dNormal . Q.rotate q . fmap fromIntegral
 
 allFacingOrientations = FacingOrientation <$> planes <*> orientations
 
@@ -148,21 +174,88 @@ mostCommonDistance vs us =
       combinations = fold (distanceUnit <$> vs <*> us)
    in bestest $ MMap.toList combinations
 
-findCommonBeacons :: Scanner -> Scanner -> (V3 Int, V.Vector (V3 Int, V3 Int))
+-- Finds a set of vectors which have the most common/modal distance between each other
+-- and returns the orientation and distance that can be used to translate the `freeScanner`
+-- vectors to the same frame of reference as the `referenceFrame` scanner.
+-- (so long as the number of common points exceeds some threshold (12 by default)
+threshold = 12
+
+lFst = view (_1)
+
+lSnd = view (_2)
+
+lFstSnd = arr lFst &&& arr lSnd
+
+findCommonBeacons :: Scanner -> Scanner -> Maybe (FacingOrientation, V3 Int)
 findCommonBeacons (Scanner _ referenceFrame) (Scanner _ freeScanner) =
-  -- I've spent a lot of time worrying about having to reconstruct the relative
-  -- orientation up to this point, but I'm giving up for the moment because it's
-  -- just slowing me down :'(
   let mostCommonForFO facingOrientation =
         let reoriented = fmap (facingOrientation ^. reorient) freeScanner
-         in mostCommonDistance referenceFrame reoriented
-   in bestest . fmap mostCommonForFO $ allFacingOrientations
+            best@(dist, common) = mostCommonDistance referenceFrame reoriented
+            len = V.length common
+         in if len >= threshold
+              then Just (facingOrientation, dist, len)
+              else Nothing
+      allBest = fmap mostCommonForFO allFacingOrientations
+      winner = maximumByOf (folded . _Just) (compare `on` (view _3)) allBest
+   in lFstSnd <$> winner
+
+justOr (Just a) _ = Just a
+justOr _ b = b
+
+recurseLookup :: forall a k. (Semigroup a, Ord k) => MonoidalMap k [(k, a)] -> k -> k -> Maybe a
+recurseLookup m targetKey k1 =
+  let go :: (Maybe [(k, a)]) -> Maybe a -> Maybe a
+      go Nothing _ = Nothing
+      go (Just []) _ = Nothing
+      go (Just kas) priorA =
+        let terminalKA = List.find ((== targetKey) . fst) kas
+            halt = priorA <> (fmap snd terminalKA)
+            recurse = mapMaybe (\(k, a) -> go (MMap.lookup k m) (priorA <> Just a)) kas
+         in halt `justOr` (listToMaybe recurse)
+   in go (MMap.lookup k1 m) Nothing
+
+findAllCommon scanners =
+  let combinations = do
+        -- todo: filter out redundant permutations - if your inversion
+        -- logic works at all we shouldn't need them.
+        l@(Scanner lid _) <- scanners
+        r@(Scanner rid _) <- scanners
+        -- don't accidentally put cycles in your recursive map lookup thingy
+        guard $ lid > rid
+        (facingOrientation, dist) <- maybeToList $ findCommonBeacons l r
+        -- let orientL = Endo $ (+ dist) . _reorient facingOrientation
+        -- let orientR = Endo $ (\a -> a - dist) . invert facingOrientation
+        let orientL = Endo $ invert facingOrientation . (\a -> a - dist)
+        let orientR = Endo $ (+ dist) . _reorient facingOrientation
+        [ (lid, [(rid, orientL)]),
+          (rid, [(lid, orientR)])
+          ]
+      lookup = MMap.fromList combinations
+      referenceFrame = (head scanners)
+      reorientate (Scanner id beacons) =
+        let fixer =
+              recurseLookup
+                lookup
+                (referenceFrame ^. identifier)
+                id
+            jFixer =
+              if (isJust fixer)
+                then fromJust fixer
+                else error "missing link in chain"
+            fixed = appEndo jFixer <$> beacons
+         in Set.fromList . V.toList $ fixed
+      reorientedTails = foldMap reorientate $ tail scanners
+      referenceSet =
+        Set.fromList . V.toList $ (referenceFrame ^. beacons)
+   in referenceSet <> reorientedTails
 
 orientateScanners :: IO ()
 orientateScanners = do
   (Right parsed) <- parseStdin parseScanners
-  let ds = findCommonBeacons (head parsed) (parsed !! 1)
-  -- _ <- MMap.traverseWithKey (\k v -> print (k, v)) ds
-  print . fst $ ds
-  traverse_ print $ snd ds
+  -- let blah = findCommonBeacons (head parsed) (parsed !! 1)
+  -- print blah
+  -- let blah = findAllCommon $ take 2 parsed
+  let blah = findAllCommon parsed
+  traverse_ print blah
+  print $ Set.size blah
   return ()
