@@ -47,8 +47,17 @@ newtype Position = Position {_getPos :: Int} deriving (Show, Eq, Ord, Num, Enum)
 makeLenses ''Score
 makeLenses ''Position
 
--- toScore :: Position -> Score
+toScore :: Position -> Score
 toScore p = Score $ p ^. getPos
+
+data Player = Player
+  { _position :: Position,
+    _score :: Score,
+    _nRolls :: Int
+  }
+  deriving (Eq, Ord, Show)
+
+makeLenses ''Player
 
 newtype Board = Board {_getBoard :: [Position]}
 
@@ -85,22 +94,39 @@ nextStepProbabilities =
         let nextPositions = rolls & (mapped . _2) %~ head . (`drop` continuingBoard)
         return (position, nextPositions)
 
-type Multiverse = MonoidalMap (Score, Position) (Sum Rational)
+type Multiverse = MonoidalMap Player (Sum Rational)
 
-fracture :: Score -> Position -> Sum Rational -> Multiverse
-fracture score position (Sum probability) =
-  let steps = nextStepProbabilities ! position
-      nextScoreProb (p, position) =
-        let nextScore = score + (toScore position)
-            nextProbability = p * probability
-         in MMap.singleton (nextScore, position) (Sum nextProbability)
-   in foldMap nextScoreProb steps
+winningScore = Score 21
+
+hasWon player = (player ^. score) >= winningScore
+
+fracture :: Player -> Sum Rational -> Multiverse
+fracture player@(Player position score nRolls) (Sum probability)
+  | score >= winningScore = MMap.singleton player (Sum probability)
+  | otherwise -- Keep fracturing
+    =
+    let steps = nextStepProbabilities ! position
+        nextPlayer (p, nextPosition) =
+          let nextScore = score + (toScore nextPosition)
+              nextProbability = p * probability
+              nextPlayer = Player nextPosition nextScore (nRolls + 3) -- we always roll the die 3 times per turn.
+           in MMap.singleton nextPlayer (Sum nextProbability)
+     in foldMap nextPlayer steps
 
 fractureMultiverse :: Multiverse -> Multiverse
-fractureMultiverse = MMap.foldMapWithKey $ uncurry fracture
+fractureMultiverse =
+  let stoppingCondition :: Multiverse -> Bool
+      stoppingCondition = allOf (ifolded . withIndex . _1) hasWon
+   in until stoppingCondition $ MMap.foldMapWithKey fracture
 
 initialUniverse :: Position -> Multiverse
-initialUniverse position = MMap.singleton ((Score 0), position) (Sum 1)
+initialUniverse position = MMap.singleton (Player position (Score 0) 0) (Sum 1)
+
+-- fightMultiverses :: Multiverse -> Multiverse ->
+-- fightMultiverses m1 m2 = do
+--   (player1, p) <- MMap.toList m1
+--   (player2, q) <- MMap.toList m2
+--   let player1Wins = (player1 ^. nRolls) <= (player2 ^. nRolls)
 
 playWithDice :: IO ()
 playWithDice =
