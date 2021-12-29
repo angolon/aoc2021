@@ -42,8 +42,6 @@ instance (Show a) => Show (SnailNum a) where
 
 makeLenses ''SnailNum
 
-data Step = L | R deriving (Show, Eq)
-
 instance Functor SnailNum where
   fmap f (Terminal a) = Terminal $ f a
   fmap f (Fork l r) = Fork (fmap f l) (fmap f r)
@@ -72,110 +70,80 @@ annotateDepth sna =
       go depth (Fork l r) = Fork (go (depth + 1) l) (go (depth + 1) r)
    in go 0 sna
 
--- Operates on depth annotated numbers
-
--- reduceSnailNumber :: SnailNum Int -> SnailNum Int
--- reduceSnailNumber sna =
---   let annotated = annotateDepth sna
---       shouldSplit = (>= 10) . snd
---       shouldExplode = (>= 4) . fst
---       -- findVictim :: SnailNum (Int, Int) -> Maybe (Int, (Int, Int))
---       findVictim = ifind (\_ n -> shouldSplit n || shouldExplode n)
---       explode tree (idx, (depth, n)) =
---         let (Just (_, m)) = tree ^? (traversed . index (idx + 1))
---          in -- blagggggghraoeush
---             -- Can't fucking replace the pair of leaves with a single
---             -- leaf using lenses because forks don't hold a value and
---             -- can't be addressed :sob:
---             tree & (imapped . index (idx - 1) . _2) +~ n
---               & (imapped . index (idx + 2) . _2) +~ m
---    in undefined
-traverseWithPath sna =
-  let go (Terminal a) depth path results = (depth, path) : results
-      go (Fork l r) depth path results =
-        let lResults = go l (depth + 1) ((left) : path) results
-         in go r (depth + 1) ((right) : path) lResults
-   in go sna 0 [] []
-
 justOr (Just a) _ = Just a
 justOr _ b = b
 
-type Path f = [(SnailNum Int) -> f (SnailNum Int)]
+data Step = L | R deriving (Show, Eq)
 
-hax = fmap (\f -> if ((Fork (Terminal 0) (Terminal 1)) ^? f) == (Just (Terminal 0)) then 'L' else 'R')
+stepToLens L = left
+stepToLens R = right
 
-goExplodeHax depth path1 fork@(Fork l@(Terminal a) r@(Terminal b))
-  | depth >= 4 = Just . hax $ path1
-goExplodeHax depth path1 (Fork l r) =
-  let lr = goExplodeHax (depth + 1) (left : path1) l
-      rr = goExplodeHax (depth + 1) (right : path1) r
-   in lr `justOr` rr
-goExplodeHax _ _ (Terminal _) = Nothing
+-- Paths are always in reverse order from the root
+type Path = [Step]
+
+type Hackery f a = SnailNum a -> f (SnailNum a)
+
+pathToLens :: (Applicative f) => Path -> Hackery f a -> Hackery f a
+pathToLens = appEndo . foldMap (Endo . stepToLens) . reverse
+
+split (Terminal a) =
+  Fork (Terminal . floor $ (a % 2)) (Terminal . ceiling $ (a % 2))
+
+downLeft :: SnailNum a -> Path -> Path
+downLeft (Terminal _) path = path
+downLeft (Fork l _) path = downLeft l (L : path)
+
+downRight :: SnailNum a -> Path -> Path
+downRight (Terminal _) path = path
+downRight (Fork _ r) path = downRight r (R : path)
 
 reduceStep :: SnailNum Int -> Maybe (SnailNum Int)
 reduceStep sna =
   let shouldSplit (Terminal a) = a >= 10
       shouldSplit _ = False
-      split (Terminal a) =
-        Fork (Terminal . floor $ (a % 2)) (Terminal . ceiling $ (a % 2))
-      pathToLens path = appEndo . foldMap Endo . reverse $ path
-      -- downLeft :: SnailNum a -> Path Identity -> Path Identity
-      downLeft (Terminal _) path = path
-      downLeft (Fork l _) path = downLeft l (left : path)
-      downRight (Terminal _) path = path
-      downRight (Fork _ r) path = downRight r (right : path)
-      updateRightSibling _ _ _ [] [] = Nothing
-      updateRightSibling root node n (_ : path1) (_ : path2) =
-        let (Just parent@(Fork l r)) = root ^? (pathToLens path1)
+      updateRightSibling _ _ _ [] = Nothing
+      updateRightSibling root node n (_ : path) =
+        let (Just parent@(Fork l r)) = root ^? (pathToLens path)
          in if l == node
               then
-                let path' = downLeft r (right : path2)
+                let path' = downLeft r (R : path)
                     updated = root & ((pathToLens path') . value) +~ n
                  in Just updated
-              else updateRightSibling root parent n path1 path2
-      updateLeftSibling _ _ _ [] [] = Nothing
+              else updateRightSibling root parent n path
+      updateLeftSibling _ _ _ [] = Nothing
       -- take two copies of the path to make lens composition/type
       -- inference magic "work"
-      updateLeftSibling root node n (_ : path1) (_ : path2) =
-        let (Just parent@(Fork l r)) = root ^? (pathToLens path1)
+      updateLeftSibling root node n (_ : path) =
+        let (Just parent@(Fork l r)) = root ^? (pathToLens path)
          in if r == node
               then
-                let path' = downRight l (left : path2)
+                let path' = downRight l (L : path)
                     updated = root & ((pathToLens path') . value) +~ n
                  in Just updated
-              else updateLeftSibling root parent n path1 path2
-      -- findSiblings (_ : path) node =
-      --   let (Just (Fork l r)) = sna ^? (pathToLens path)
-      --    in if l == node
-      --         then ((updateLeftSibling path l), (Just $ downRight r path))
-      --         else ((Just $ downLeft l path), (findRightSibling path r))
-      updateSibling n number p = number & ((pathToLens p) . value) +~ n
-      explode path1 path2 a b pair =
-        let updatedLeft = updateLeftSibling sna pair a path1 path2
+              else updateLeftSibling root parent n path
+      explode path a b pair =
+        let updatedLeft = updateLeftSibling sna pair a path
             defaultedLeft = fromMaybe sna updatedLeft
-            updatedRight = updateRightSibling defaultedLeft pair b path1 path2
+            updatedRight = updateRightSibling defaultedLeft pair b path
             defaultedRight = fromMaybe defaultedLeft updatedRight
-            replaced = defaultedRight & (pathToLens path2) .~ (Terminal 0)
-         in -- hax = fmap (\f -> if (pair ^? f) == (Just (_left pair)) then 'L' else 'R') path1
-            -- replaced = error . show $ hax
-            Just replaced
-      goExplode depth path1 path2 fork@(Fork l@(Terminal a) r@(Terminal b))
+            replaced = defaultedRight & (pathToLens path) .~ (Terminal 0)
+         in Just replaced
+      goExplode depth path fork@(Fork l@(Terminal a) r@(Terminal b))
         | depth >= 4 =
-          let result = explode path1 path2 a b fork
+          let result = explode path a b fork
            in result
-      -- in error $ hax path1
-      goExplode depth path1 path2 (Fork l r) =
-        let lr = goExplode (depth + 1) (left : path1) (left : path2) l
-            rr = goExplode (depth + 1) (right : path1) (right : path2) r
+      goExplode depth path (Fork l r) =
+        let lr = goExplode (depth + 1) (L : path) l
+            rr = goExplode (depth + 1) (R : path) r
          in lr `justOr` rr
-      goExplode _ _ _ (Terminal _) = Nothing
+      goExplode _ _ (Terminal _) = Nothing
       goSplit path (Fork l r) =
-        (goSplit (left : path) l) `justOr` (goSplit (right : path) r)
+        (goSplit (L : path) l) `justOr` (goSplit (R : path) r)
       goSplit path (Terminal a) =
         if a >= 10
           then Just (sna & (pathToLens path) %~ split)
           else Nothing
-      exploded = goExplode 0 [] [] sna
+      exploded = goExplode 0 [] sna
       splitted = goSplit [] sna
    in exploded `justOr` splitted -- thank god for laziness
 
