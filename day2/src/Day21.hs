@@ -49,7 +49,7 @@ newtype Die = Die {_getDie :: [Int]}
 makeLenses ''Die
 
 data Player = Player
-  { _name :: String,
+  { _name :: Int,
     _position :: Int,
     _score :: Int,
     _continuingBoard :: Board
@@ -60,7 +60,7 @@ makeLenses ''Player
 data Game = Game
   { _nRolls :: Int,
     _players :: (Player, Player),
-    _d100 :: Die
+    _die :: Die
   }
 
 makeLenses ''Game
@@ -68,13 +68,13 @@ makeLenses ''Game
 board :: Board
 board = Board $ List.cycle [1 .. 10]
 
-player :: String -> Int -> Player
+player :: Int -> Int -> Player
 player name startingPosition =
   Player name startingPosition 0 (board & getBoard %~ drop startingPosition)
 
 initialiseGame :: Player -> Player -> Game
 initialiseGame player1 player2 =
-  Game 0 (player1, player2) (Die $ List.cycle [1 .. 100])
+  Game 0 (player1, player2) (Die [1 .. 3])
 
 move :: Int -> Player -> Player
 move n player =
@@ -82,16 +82,19 @@ move n player =
       (Just nextPosition) = firstOf (continuingBoard . getBoard . folded) withNextBoard
    in withNextBoard & position .~ nextPosition & score +~ nextPosition
 
-type GameState = S.StateT Game IO
+type GameState = S.StateT Game []
+
+quantumDieRoll :: Die -> [(Int, Int, Int)]
+quantumDieRoll (Die d) = (,,) <$> d <*> d <*> d
 
 roll :: GameState [Int]
 roll = do
   game <- S.get
-  let d = game ^. (d100 . getDie)
-  let (rolls, d') = List.splitAt 3 d
-  let game' = game & (d100 . getDie) .~ d' & nRolls +~ 3
+  let d = game ^. die
+  (roll1, roll2, roll3) <- S.lift $ quantumDieRoll d
+  let game' = game & nRolls +~ 3
   S.put game'
-  return rolls
+  return [roll1, roll2, roll3]
 
 turn :: GameState ()
 turn = do
@@ -100,26 +103,29 @@ turn = do
   let (player1, player2) = game ^. players
   let rollTotal = sum rolls
   let nextPlayer1 = move rollTotal player1
-  -- Debugging stuff/just for fun.
-  let rollShow = List.intercalate "+" $ fmap show rolls
-  let moveInfo =
-        "Player " ++ (nextPlayer1 ^. name) ++ " rolls " ++ rollShow
-          ++ " and moves to space "
-          ++ (show $ nextPlayer1 ^. position)
-          ++ " for a total score of "
-          ++ (show $ nextPlayer1 ^. score)
-          ++ "."
-  liftIO $ putStrLn moveInfo
   let nextGame = game & players .~ (player2, nextPlayer1)
   S.put nextGame
 
 shouldStop :: GameState Bool
 shouldStop = do
   game <- S.get
-  return $ anyOf (players . both . score) (>= 1000) game
+  return $ anyOf (players . both . score) (>= 21) game
 
 playGame :: GameState ()
 playGame = Loops.untilM_ turn shouldStop
+
+winCounts :: GameState (MonoidalMap Int (Sum Integer))
+winCounts = do
+  game <- S.get
+  let (Just winner) = maximumByOf (players . both) (compare `on` (^. score)) game
+  let n = winner ^. name
+  return $ MMap.singleton n (Sum 1)
+
+playQuantumGames :: Game -> MonoidalMap Int (Sum Integer)
+playQuantumGames initial =
+  let horrific = playGame >> winCounts
+      multiverse = S.evalStateT horrific initial
+   in fold multiverse
 
 finalMunge :: Game -> Int
 finalMunge game =
@@ -128,11 +134,10 @@ finalMunge game =
 
 playWithDice :: IO ()
 playWithDice =
-  let player1Pos = 6 - 1
-      player2Pos = 7 - 1
-      player1 = player "1" player1Pos
-      player2 = player "2" player2Pos
+  let player1Pos = 4 - 1
+      player2Pos = 8 - 1
+      player1 = player 1 player1Pos
+      player2 = player 2 player2Pos
       initial = initialiseGame player1 player2
-   in do
-        finished <- S.execStateT playGame initial
-        print . finalMunge $ finished
+      finished = playQuantumGames initial
+   in print finished
