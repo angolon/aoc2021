@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -36,33 +37,6 @@ import Text.Parsec
 import Text.Parsec.Char
 import Text.Show.Functions
 
-type Algorithm = V.Vector Bool
-
-type Image = Set (Int, Int)
-
-parsePixel :: MyParser Bool
-parsePixel =
-  let light = const True <$> char '#'
-      dark = const False <$> char '.'
-   in light <|> dark
-
-parseAlgorithm :: MyParser Algorithm
-parseAlgorithm = V.fromList <$> count 512 parsePixel
-
-parseImage :: MyParser Image
-parseImage =
-  let parseLine = V.fromList <$> many1 parsePixel
-      parseLines = V.fromList <$> sepEndBy1 parseLine endOfLine <* eof
-      toImage pss = do
-        (y, ps) <- V.indexed pss
-        (x, p) <- V.indexed ps
-        guard p
-        return $ Set.singleton (x, y)
-   in fold . toImage <$> parseLines
-
-parsePuzzle :: MyParser (Algorithm, Image)
-parsePuzzle = (,) <$> parseAlgorithm <* skipMany1 endOfLine <*> parseImage
-
 data Bounds = Bounds
   { _minX :: Int,
     _maxX :: Int,
@@ -76,13 +50,51 @@ makeLenses ''Bounds
 expandBounds :: Bounds -> Bounds
 expandBounds b =
   b
-    & minX -~ 1
-    & maxX +~ 1
-    & minY -~ 1
-    & maxY +~ 1
+    & minX -~ 2
+    & maxX +~ 2
+    & minY -~ 2
+    & maxY +~ 2
 
-imageBounds :: Image -> Bounds
-imageBounds img =
+inBounds :: (Int, Int) -> Bounds -> Bool
+inBounds (x, y) (Bounds minX maxX minY maxY) =
+  (minX <= x && x <= maxX)
+    && (minY <= y && y <= maxY)
+
+outOfBounds :: (Int, Int) -> Bounds -> Bool
+outOfBounds xy = not . inBounds xy
+
+type Algorithm = V.Vector Bool
+
+data Image = Image
+  { _litPixels :: Set (Int, Int),
+    _knownBounds :: Bounds,
+    _voidLit :: (Int, Int) -> Bool
+  }
+  deriving (Show)
+
+makeLenses ''Image
+
+unlitVoid = const False
+
+litVoid = const True
+
+isLit :: (Int, Int) -> Image -> Bool
+isLit xy img =
+  if xy `inBounds` (img ^. knownBounds)
+    then xy `member` (img ^. litPixels)
+    else (img ^. voidLit) xy
+
+parsePixel :: MyParser Bool
+parsePixel =
+  let light = const True <$> char '#'
+      dark = const False <$> char '.'
+   in light <|> dark
+
+parseAlgorithm :: MyParser Algorithm
+parseAlgorithm = V.fromList <$> count 512 parsePixel
+
+pixelBounds :: Set (Int, Int) -> Bounds
+pixelBounds img =
   fromJust $
     Bounds
       <$> minimumOf (folded . _1) img
@@ -90,7 +102,25 @@ imageBounds img =
       <*> minimumOf (folded . _2) img
       <*> maximumOf (folded . _2) img
 
--- enhancementWindow x y = (,) <$> [(x - 1) .. (x + 1)] <*> [(y - 1) .. (y + 1)]
+toImage :: V.Vector (V.Vector Bool) -> Image
+toImage pss =
+  let litPixels = fold $ do
+        (y, ps) <- V.indexed pss
+        (x, p) <- V.indexed ps
+        guard p
+        return $ Set.singleton (x, y)
+      bounds = pixelBounds litPixels
+   in Image litPixels bounds unlitVoid -- the void starts as unlit
+
+parseImage :: MyParser Image
+parseImage =
+  let parseLine = V.fromList <$> many1 parsePixel
+      parseLines = V.fromList <$> sepEndBy1 parseLine endOfLine <* eof
+   in toImage <$> parseLines
+
+parsePuzzle :: MyParser (Algorithm, Image)
+parsePuzzle = (,) <$> parseAlgorithm <* skipMany1 endOfLine <*> parseImage
+
 enhancementWindow x y = do
   y' <- [(y - 1) .. (y + 1)]
   x' <- [(x - 1) .. (x + 1)]
@@ -98,48 +128,50 @@ enhancementWindow x y = do
 
 windowBits :: Image -> Int -> Int -> Int
 windowBits img x y =
-  let bits = (`member` img) <$> enhancementWindow x y
+  let bits = (`isLit` img) <$> enhancementWindow x y
    in toInt bits
 
 enhance :: Algorithm -> Image -> Image
 enhance alg img =
-  let nextBounds = expandBounds . imageBounds $ img
+  let nextBounds = expandBounds . _knownBounds $ img
       bits = windowBits img
-      nextLit = do
+      -- expanded bounds expand far enough into the void
+      -- that we can test them for whether or not we should
+      -- swap the void's state.
+      bottomLeft = (nextBounds ^. minX, nextBounds ^. minY)
+      currentlyLitVoid = bottomLeft `isLit` img
+      nextLit = fold $ do
         x <- [nextBounds ^. minX .. nextBounds ^. maxX]
         y <- [nextBounds ^. minY .. nextBounds ^. maxY]
         let idx = bits x y
         let isLit = alg ! idx
         guard isLit
         return $ Set.singleton (x, y)
-   in fold nextLit
+      nextLitVoid = bottomLeft `member` nextLit
+      nextVoidF =
+        if
+            | not currentlyLitVoid && nextLitVoid -> litVoid
+            | currentlyLitVoid && nextLitVoid -> error "I can't represent non-alternating infinite voids"
+            | otherwise -> unlitVoid
+   in Image nextLit nextBounds nextVoidF
 
 printImage :: Image -> IO ()
 printImage img =
-  let bounds = imageBounds img
+  let bounds = img ^. knownBounds
       fmtRow y = do
         x <- [bounds ^. minX .. bounds ^. maxX]
-        if (x, y) `member` img
+        if (x, y) `isLit` img
           then return '#'
           else return '.'
    in traverse_ (putStrLn . fmtRow) [bounds ^. minY .. bounds ^. maxY]
 
--- let idxPixel lineOffset columnOffset = do
---       pos <- getPosition
---       let line = (sourceLine pos) - lineOffset
---       let col = (sourceColumn pos) - columnOffset
---       p <- parsePixel
---       return (p, (line, col))
---  in undefined
 zoomAndEnhance :: IO ()
 zoomAndEnhance = do
   (Right (alg, img)) <- parseStdin parsePuzzle
   let algEnhance = enhance alg
-  -- let enhanced = algEnhance . algEnhance $ img
-  let enhanced = img
-  print alg
-  print $ Set.size enhanced
-  print $ imageBounds enhanced
+  let enhanced = algEnhance . algEnhance $ img
   printImage enhanced
+  print $ enhanced ^. knownBounds
+  print $ Set.size (enhanced ^. litPixels)
 
 -- printImage enhanced
