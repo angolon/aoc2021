@@ -71,7 +71,10 @@ finalise pos =
    in result
 
 parseInt :: MyParser Int
-parseInt = fmap (read @Int) (many1 digit)
+parseInt =
+  let negate = option "" (string "-")
+      digits = (++) <$> negate <*> many1 digit
+   in (read @Int) <$> digits
 
 parseStdin :: MyParser a -> IO (Either ParseError a)
 parseStdin p = getContents >>= runParserT p () ""

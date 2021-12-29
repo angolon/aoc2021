@@ -27,7 +27,7 @@ import Data.Ratio
 import Data.Set (Set, member, union, (\\))
 import qualified Data.Set as Set
 import qualified Data.Vector as V
-import Lib (MyParser, parseStdin)
+import Lib (MyParser, parseInt, parseStdin)
 import Linear.Metric (dot)
 import qualified Linear.Quaternion as Q
 import Linear.V3 (V3 (..), _x, _y, _z)
@@ -122,12 +122,6 @@ invert (FacingOrientation normal α) =
    in fmap round . invertPlaneAlign dNormal . Q.rotate q . fmap fromIntegral
 
 allFacingOrientations = FacingOrientation <$> planes <*> orientations
-
-parseInt :: MyParser Int
-parseInt =
-  let negate = option "" (string "-")
-      digits = (++) <$> negate <*> many1 digit
-   in (read @Int) <$> digits
 
 parseV3 :: MyParser (V3 Int)
 parseV3 = V3 <$> parseInt <* char ',' <*> parseInt <* char ',' <*> parseInt
