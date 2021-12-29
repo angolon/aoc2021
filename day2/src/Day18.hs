@@ -102,6 +102,16 @@ justOr _ b = b
 
 type Path f = [(SnailNum Int) -> f (SnailNum Int)]
 
+hax = fmap (\f -> if ((Fork (Terminal 0) (Terminal 1)) ^? f) == (Just (Terminal 0)) then 'L' else 'R')
+
+goExplodeHax depth path1 fork@(Fork l@(Terminal a) r@(Terminal b))
+  | depth >= 4 = Just . hax $ path1
+goExplodeHax depth path1 (Fork l r) =
+  let lr = goExplodeHax (depth + 1) (left : path1) l
+      rr = goExplodeHax (depth + 1) (right : path1) r
+   in lr `justOr` rr
+goExplodeHax _ _ (Terminal _) = Nothing
+
 reduceStep :: SnailNum Int -> Maybe (SnailNum Int)
 reduceStep sna =
   let shouldSplit (Terminal a) = a >= 10
@@ -149,20 +159,41 @@ reduceStep sna =
          in -- hax = fmap (\f -> if (pair ^? f) == (Just (_left pair)) then 'L' else 'R') path1
             -- replaced = error . show $ hax
             Just replaced
-      go depth path1 path2 fork@(Fork l@(Terminal a) r@(Terminal b))
-        | depth >= 4 = explode path1 path2 a b fork
-      go depth path1 path2 (Fork l r) =
-        let lr = go (depth + 1) (left : path1) (left : path2) l
-            rr = go (depth + 1) (right : path1) (right : path2) r
+      goExplode depth path1 path2 fork@(Fork l@(Terminal a) r@(Terminal b))
+        | depth >= 4 =
+          let result = explode path1 path2 a b fork
+           in result
+      -- in error $ hax path1
+      goExplode depth path1 path2 (Fork l r) =
+        let lr = goExplode (depth + 1) (left : path1) (left : path2) l
+            rr = goExplode (depth + 1) (right : path1) (right : path2) r
          in lr `justOr` rr
-      go _ path1 path2 (Terminal a) =
+      goExplode _ _ _ (Terminal _) = Nothing
+      goSplit path (Fork l r) =
+        (goSplit (left : path) l) `justOr` (goSplit (right : path) r)
+      goSplit path (Terminal a) =
         if a >= 10
-          then Just (sna & (pathToLens path2) %~ split)
+          then Just (sna & (pathToLens path) %~ split)
           else Nothing
-   in go 0 [] [] sna
+      exploded = goExplode 0 [] [] sna
+      splitted = goSplit [] sna
+   in exploded `justOr` splitted -- thank god for laziness
+
+reduceSnailNum :: SnailNum Int -> IO (SnailNum Int)
+reduceSnailNum sna =
+  case reduceStep sna of
+    Just snb -> print snb >> reduceSnailNum snb
+    _ -> return sna
+
+appendSnailNum :: SnailNum Int -> SnailNum Int -> IO (SnailNum Int)
+appendSnailNum l r = reduceSnailNum (Fork l r)
+
+sumSnailNums :: [SnailNum Int] -> IO (SnailNum Int)
+sumSnailNums [] = error "nope"
+sumSnailNums (n : ns) = foldl' (\l r -> l >>= (`appendSnailNum` r)) (return n) ns
 
 doMathsHomework :: IO ()
 doMathsHomework = do
   (Right parsed) <- parseStdin parseSnailNums
-  let reducedOnce = fmap reduceStep parsed
-  traverse_ print reducedOnce
+  n <- sumSnailNums parsed
+  print n
