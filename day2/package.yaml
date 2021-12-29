@@ -61,4 +61,5 @@ tests:
     - tasty-discover
     - tasty-hunit
     - tasty-quickcheck
+    - tasty-hspec
     - tasty-th

@@ -24,7 +24,7 @@ import Data.Monoid (Endo (..), Sum (..), getSum)
 import Data.PQueue.Min (MinQueue)
 import qualified Data.PQueue.Min as MinQueue
 import Data.Ratio
-import Data.Set (Set, union, (\\))
+import Data.Set (Set, member, union, (\\))
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import Lib (MyParser, parseStdin)
@@ -33,6 +33,7 @@ import qualified Linear.Quaternion as Q
 import Linear.V3 (V3 (..), _x, _y, _z)
 import Text.Parsec
 import Text.Parsec.Char
+import Text.Show.Functions
 
 data Scanner = Scanner {_identifier :: Int, _beacons :: (V.Vector (V3 Int))} deriving (Eq, Show)
 
@@ -47,15 +48,6 @@ yAxis = V3 0 1 0
 zAxis :: (Floating a) => V3 a
 zAxis = V3 0 0 1
 
--- Code from my clojure keyboard project that I'm translating/misappropriating:
--- (defn angle-between [v1 v2]
---   (let [mag-v1 (v/magnitude v1)
---         mag-v2 (v/magnitude v2)
---         denom  (* mag-v1 mag-v2)
---         numer  (v/dot v1 v2)]
---     (->> (/ numer denom)
---          Math/acos
---          )))
 magnitude :: (Floating a) => V3 a -> a
 magnitude (V3 x y z) = sqrt (x ** 2 + y ** 2 + z ** 2)
 
@@ -67,25 +59,6 @@ angleBetween v1 v2 =
       numer = v1 `dot` v2
    in acos (numer / denom)
 
--- (defn plane-align [plane-normal shape]
---   (let [x-y-projection (v/vector (get plane-normal 0) (get plane-normal 1) 0)
---         yaw-angle (angle-between x-axis x-y-projection)
---         ; offset the angle by 2π if the rotation should be more than π radians
---         ; (90 degrees)
---         yaw-α (if (<= 0 (get plane-normal 1)) yaw-angle (- (* 2 π) yaw-angle))
---         yaw-q (q/from-angle-axis yaw-α z-axis)
---         yawed-x-axis (q/rotate yaw-q x-axis)
---         roll-angle (angle-between yawed-x-axis plane-normal)
---         ; offset the angle by 2π if the rotation should be more than π radians
---         ; (90 degrees)
---         roll-β (if (<= 0 (get plane-normal 2)) roll-angle (- (* 2 π) roll-angle))
---         yawed-y-axis (q/rotate yaw-q (v/vector 0 -1 0))]
---     (->> shape
---          (rotate yaw-α z-axis)
---          (rotate roll-β yawed-y-axis)
---          )))
---
---
 yawAngle normal =
   let xyProjection = normal & _z .~ 0
       yawAngle =
@@ -202,17 +175,22 @@ findCommonBeacons (Scanner _ referenceFrame) (Scanner _ freeScanner) =
 justOr (Just a) _ = Just a
 justOr _ b = b
 
+-- Semigroup on values associates to the right/appends to the left as we descend the graph,
+-- i.e. a3 <> (a2 <> a1)
+-- Done so because we're only using this for endomorphism composition a3 . (a2 . a1)
 recurseLookup :: forall a k. (Semigroup a, Ord k) => MonoidalMap k [(k, a)] -> k -> k -> Maybe a
 recurseLookup m targetKey k1 =
-  let go :: (Maybe [(k, a)]) -> Maybe a -> Maybe a
-      go Nothing _ = Nothing
-      go (Just []) _ = Nothing
-      go (Just kas) priorA =
+  let go :: (Maybe [(k, a)]) -> Maybe a -> Set k -> Maybe a
+      go Nothing _ _ = Nothing
+      go (Just []) _ _ = Nothing
+      go (Just kas) priorA visited =
         let terminalKA = List.find ((== targetKey) . fst) kas
-            halt = priorA <> (fmap snd terminalKA)
-            recurse = mapMaybe (\(k, a) -> go (MMap.lookup k m) (priorA <> Just a)) kas
-         in halt `justOr` (listToMaybe recurse)
-   in go (MMap.lookup k1 m) Nothing
+            composed = (fmap snd terminalKA) <> priorA
+            down (k, a) = go (MMap.lookup k m) (Just a <> priorA) (Set.insert k visited)
+            unvisitedKAs = filter (not . (`member` visited) . fst) kas
+            recurse = mapMaybe down unvisitedKAs
+         in if isJust terminalKA then composed else listToMaybe recurse
+   in go (MMap.lookup k1 m) Nothing Set.empty
 
 findAllCommon scanners =
   let combinations = do
@@ -227,10 +205,10 @@ findAllCommon scanners =
         -- let orientR = Endo $ (\a -> a - dist) . invert facingOrientation
         let orientL = Endo $ invert facingOrientation . (\a -> a - dist)
         let orientR = Endo $ (+ dist) . _reorient facingOrientation
-        [ (lid, [(rid, orientL)]),
-          (rid, [(lid, orientR)])
-          ]
-      lookup = MMap.fromList combinations
+        let lm = MMap.singleton lid [(rid, orientL)]
+        let rm = MMap.singleton rid [(lid, orientR)]
+        return $ lm <> rm
+      lookup = fold combinations
       referenceFrame = (head scanners)
       reorientate (Scanner id beacons) =
         let fixer =
@@ -247,7 +225,14 @@ findAllCommon scanners =
       reorientedTails = foldMap reorientate $ tail scanners
       referenceSet =
         Set.fromList . V.toList $ (referenceFrame ^. beacons)
-   in referenceSet <> reorientedTails
+   in do
+        MMap.traverseWithKey
+          ( \k a ->
+              let as = fmap fst a
+               in print (k, as)
+          )
+          lookup
+        return $ referenceSet <> reorientedTails
 
 orientateScanners :: IO ()
 orientateScanners = do
@@ -255,7 +240,7 @@ orientateScanners = do
   -- let blah = findCommonBeacons (head parsed) (parsed !! 1)
   -- print blah
   -- let blah = findAllCommon $ take 2 parsed
-  let blah = findAllCommon parsed
+  blah <- findAllCommon parsed
   traverse_ print blah
   print $ Set.size blah
   return ()
