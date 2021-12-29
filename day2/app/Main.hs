@@ -1,6 +1,6 @@
 module Main where
 
-import Day20 (zoomAndEnhance)
+import Day21 (playWithDice)
 
 main :: IO ()
-main = zoomAndEnhance
+main = playWithDice
