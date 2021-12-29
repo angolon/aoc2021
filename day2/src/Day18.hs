@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
@@ -109,43 +110,52 @@ reduceStep sna =
       downLeft (Fork l _) path = downLeft l (left : path)
       downRight (Terminal _) path = path
       downRight (Fork _ r) path = downRight r (right : path)
-      findRightSibling [] _ = Nothing
-      findRightSibling (_ : path) node =
-        let (Just parent@(Fork l r)) = sna ^? (pathToLens path)
+      updateRightSibling _ _ _ [] [] = Nothing
+      updateRightSibling root node n (_ : path1) (_ : path2) =
+        let (Just parent@(Fork l r)) = root ^? (pathToLens path1)
          in if l == node
-              then Just $ downRight r path
-              else findRightSibling path parent
-      -- findLeftSibling :: (Applicative f) => Path f -> SnailNum Int -> Maybe (Path)
-      findLeftSibling [] _ = Nothing
-      findLeftSibling (_ : path) node =
-        let (Just parent@(Fork l r)) = sna ^? (pathToLens path)
+              then
+                let path' = downRight r (right : path2)
+                    updated = root & ((pathToLens path') . value) +~ n
+                 in Just updated
+              else updateRightSibling root parent n path1 path2
+      updateLeftSibling _ _ _ [] [] = Nothing
+      -- take two copies of the path to make lens composition/type
+      -- inference magic "work"
+      updateLeftSibling root node n (_ : path1) (_ : path2) =
+        let (Just parent@(Fork l r)) = root ^? (pathToLens path1)
          in if r == node
-              then Just $ downLeft l path
-              else findLeftSibling path parent
-      findSiblings (_ : path) node =
-        let (Just (Fork l r)) = sna ^? (pathToLens path)
-         in if l == node
-              then ((findLeftSibling path l), (Just $ downRight r path))
-              else ((Just $ downLeft l path), (findRightSibling path r))
+              then
+                let path' = downLeft l (left : path2)
+                    updated = root & ((pathToLens path') . value) +~ n
+                 in Just updated
+              else updateLeftSibling root parent n path1 path2
+      -- findSiblings (_ : path) node =
+      --   let (Just (Fork l r)) = sna ^? (pathToLens path)
+      --    in if l == node
+      --         then ((updateLeftSibling path l), (Just $ downRight r path))
+      --         else ((Just $ downLeft l path), (findRightSibling path r))
       updateSibling n number p = number & ((pathToLens p) . value) +~ n
-      explode path a b pair =
-        let (leftSibling, rightSibling) = findSiblings path pair
-            updatedLeft = fmap (updateSibling a sna) leftSibling
+      explode path1 path2 a b pair =
+        let updatedLeft = updateLeftSibling sna pair a path1 path2
             defaultedLeft = fromMaybe sna updatedLeft
-            updatedRight =
-              fromMaybe updatedLeft (fmap updateSibling b updatedLeft $ rightSibling)
-         in undefined
-      go depth path fork@(Fork l@(Terminal a) r@(Terminal b))
-        | depth >= 4 = explode path a b fork
-      go depth path (Fork l r) =
-        let lr = go (depth + 1) (left : path) l
-            rr = go (depth + 1) (right : path) r
+            updatedRight = updateRightSibling defaultedLeft pair b path1 path2
+            defaultedRight = fromMaybe defaultedLeft updatedRight
+            replaced = defaultedRight & (pathToLens path2) .~ (Terminal 0)
+         in -- hax = fmap (\f -> if (pair ^? f) == (Just (_left pair)) then 'L' else 'R') path1
+            -- replaced = error . show $ hax
+            Just replaced
+      go depth path1 path2 fork@(Fork l@(Terminal a) r@(Terminal b))
+        | depth >= 4 = explode path1 path2 a b fork
+      go depth path1 path2 (Fork l r) =
+        let lr = go (depth + 1) (left : path1) (left : path2) l
+            rr = go (depth + 1) (right : path1) (right : path2) r
          in lr `justOr` rr
-      go _ path (Terminal a) =
+      go _ path1 path2 (Terminal a) =
         if a >= 10
-          then Just (sna & (pathToLens path) %~ split)
+          then Just (sna & (pathToLens path2) %~ split)
           else Nothing
-   in go 0 [] sna
+   in go 0 [] [] sna
 
 doMathsHomework :: IO ()
 doMathsHomework = do
