@@ -7,7 +7,6 @@ module Day18 where
 
 import Control.Lens
 import Control.Monad
-import Data.Bifunctor.Swap (swap)
 import Data.Either (either)
 import Data.Foldable
 import Data.Function (on)
@@ -75,6 +74,9 @@ justOr _ b = b
 
 data Step = L | R deriving (Show, Eq)
 
+swap L = R
+swap R = L
+
 stepToLens L = left
 stepToLens R = right
 
@@ -89,42 +91,41 @@ pathToLens = appEndo . foldMap (Endo . stepToLens) . reverse
 split (Terminal a) =
   Fork (Terminal . floor $ (a % 2)) (Terminal . ceiling $ (a % 2))
 
-downLeft :: SnailNum a -> Path -> Path
-downLeft (Terminal _) path = path
-downLeft (Fork l _) path = downLeft l (L : path)
+downLeft :: Path -> SnailNum a -> Path
+downLeft path (Terminal _) = path
+downLeft path (Fork l _) = downLeft (L : path) l
 
-downRight :: SnailNum a -> Path -> Path
-downRight (Terminal _) path = path
-downRight (Fork _ r) path = downRight r (R : path)
+downRight :: Path -> SnailNum a -> Path
+downRight path (Terminal _) = path
+downRight path (Fork _ r) = downRight (R : path) r
+
+downLR L = downLeft
+downLR R = downRight
+
+incrementNode root n path =
+  root & ((pathToLens path) . value) +~ n
+
+updateLRSibling lr root n path =
+  let unwound = dropWhile (== lr) path
+      rl = swap lr
+      pathToSibling = case unwound of
+        (rl) : tail ->
+          let swapped = lr : tail
+              branch = root ^? (pathToLens swapped)
+           in downLR rl swapped <$> branch
+        [] -> Nothing
+   in incrementNode root n <$> pathToSibling
+
+updateRightSibling = updateLRSibling R
+
+updateLeftSibling = updateLRSibling L
 
 reduceStep :: SnailNum Int -> Maybe (SnailNum Int)
 reduceStep sna =
-  let shouldSplit (Terminal a) = a >= 10
-      shouldSplit _ = False
-      updateRightSibling _ _ _ [] = Nothing
-      updateRightSibling root node n (_ : path) =
-        let (Just parent@(Fork l r)) = root ^? (pathToLens path)
-         in if l == node
-              then
-                let path' = downLeft r (R : path)
-                    updated = root & ((pathToLens path') . value) +~ n
-                 in Just updated
-              else updateRightSibling root parent n path
-      updateLeftSibling _ _ _ [] = Nothing
-      -- take two copies of the path to make lens composition/type
-      -- inference magic "work"
-      updateLeftSibling root node n (_ : path) =
-        let (Just parent@(Fork l r)) = root ^? (pathToLens path)
-         in if r == node
-              then
-                let path' = downRight l (L : path)
-                    updated = root & ((pathToLens path') . value) +~ n
-                 in Just updated
-              else updateLeftSibling root parent n path
-      explode path a b pair =
-        let updatedLeft = updateLeftSibling sna pair a path
+  let explode path a b pair =
+        let updatedLeft = updateLeftSibling sna a path
             defaultedLeft = fromMaybe sna updatedLeft
-            updatedRight = updateRightSibling defaultedLeft pair b path
+            updatedRight = updateRightSibling defaultedLeft b path
             defaultedRight = fromMaybe defaultedLeft updatedRight
             replaced = defaultedRight & (pathToLens path) .~ (Terminal 0)
          in Just replaced
