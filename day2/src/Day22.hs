@@ -173,68 +173,13 @@ n3SectionOverwrite
           let xIntersect = dimensionIntersect priorXs nextXs
               yIntersect = dimensionIntersect priorYs nextYs
               zIntersect = dimensionIntersect priorZs nextZs
-              left = N3Section <$> lx <*> yIntersect <*> zIntersect
-              right = N3Section <$> ux <*> yIntersect <*> zIntersect
-              down = N3Section <$> xIntersect <*> ly <*> zIntersect
-              up = N3Section <$> xIntersect <*> uy <*> zIntersect
-              back = N3Section <$> xIntersect <*> yIntersect <*> lz
-              forward = N3Section <$> xIntersect <*> yIntersect <*> uz
-              -- for these variations:
-              -- l, r = left, right
-              -- u, d = down, up
-              -- b, f == back, forward
-              ld = N3Section <$> lx <*> ly <*> zIntersect
-              lu = N3Section <$> lx <*> uy <*> zIntersect
-              ru = N3Section <$> ux <*> uy <*> zIntersect
-              rd = N3Section <$> ux <*> ly <*> zIntersect
-              ---
-              bld = N3Section <$> lx <*> ly <*> lz
-              bl = N3Section <$> lx <*> yIntersect <*> lz
-              blu = N3Section <$> lx <*> uy <*> lz
-              bu = N3Section <$> xIntersect <*> uy <*> lz
-              bru = N3Section <$> ux <*> uy <*> lz
-              br = N3Section <$> ux <*> yIntersect <*> lz
-              brd = N3Section <$> ux <*> ly <*> lz
-              bd = N3Section <$> xIntersect <*> ly <*> lz
-              ---
-              fld = N3Section <$> lx <*> ly <*> uz
-              fl = N3Section <$> lx <*> yIntersect <*> uz
-              flu = N3Section <$> lx <*> uy <*> uz
-              fu = N3Section <$> xIntersect <*> uy <*> uz
-              fru = N3Section <$> ux <*> uy <*> uz
-              fr = N3Section <$> ux <*> yIntersect <*> uz
-              frd = N3Section <$> ux <*> ly <*> uz
-              fd = N3Section <$> xIntersect <*> ly <*> uz
-              --
-              allMaybeQuadrants =
-                [ left,
-                  right,
-                  up,
-                  down,
-                  back,
-                  forward,
-                  ld,
-                  lu,
-                  ru,
-                  rd,
-                  bld,
-                  bl,
-                  blu,
-                  bu,
-                  bru,
-                  br,
-                  brd,
-                  bd,
-                  fld,
-                  fl,
-                  flu,
-                  fu,
-                  fru,
-                  fr,
-                  frd,
-                  fd
-                ]
-              allQuadrants = allMaybeQuadrants >>= maybeToList
+              allQuadrants = do
+                xs <- [lx, ux, xIntersect]
+                ys <- [ly, uy, yIntersect]
+                zs <- [lz, uz, zIntersect]
+                -- ignore the central intersection combination
+                guard $ not (xs == xIntersect && ys == yIntersect && zs == zIntersect)
+                maybeToList $ N3Section <$> xs <*> ys <*> zs
            in mergeN3Sections allQuadrants
         -- in error . show $ mergeN3Sections allQuadrants
         maybeAllQuadrants = generateQuadrants <$> xsOverwrite <*> ysOverwrite <*> zsOverwrite
