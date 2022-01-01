@@ -14,6 +14,7 @@ import Control.Monad
 import Control.Monad.IO.Class (liftIO)
 import qualified Control.Monad.Loops as Loops
 import qualified Control.Monad.State.Lazy as S
+import Data.Bifunctor.Swap (swap)
 import Data.Either (either)
 import Data.Foldable
 import Data.Function (on)
@@ -155,7 +156,7 @@ nextSteps b cs =
 
 data SolutionSpace = SolutionSpace
   { _queue :: MinPQueue Int Burrow,
-    _observedStates :: Set Burrow
+    _observedStates :: Map Burrow Int
   }
   deriving (Eq)
 
@@ -170,28 +171,35 @@ solved = null . movers
 solveStep :: SolutionSpace -> S.State SolutionSpace ()
 solveStep solutionSpace =
   let ((cost, burrow), nextQueue) = MinPQueue.deleteFindMin . _queue $ solutionSpace
-      newState = not . (`Set.member` (_observedStates solutionSpace))
+      cheaperState otherBurrow otherCost =
+        let elem = (_observedStates solutionSpace) !? otherBurrow
+         in all (> otherCost) elem
       nextBurrowCosts = do
         mover <- movers burrow
         (movingCost, moved) <- nextSteps burrow mover
-        guard $ newState moved
-        return (movingCost + cost, moved)
-      nextBurrows = Set.fromList $ fmap snd nextBurrowCosts
+        let cost' = cost + movingCost
+        guard $ cheaperState moved cost'
+        return (cost', moved)
+      nextMinCostStates = Map.fromList $ fmap swap nextBurrowCosts
    in S.put $
         solutionSpace
           & queue .~ MinPQueue.union nextQueue (MinPQueue.fromList nextBurrowCosts)
-          & observedStates %~ Set.union nextBurrows
+          -- Put the newest min cost states on the left of
+          -- mappend, so that those values override previous
+          -- more costly potentials
+          & observedStates %~ (nextMinCostStates <>)
 
 solveBurrow :: Burrow -> (Int, Burrow)
 solveBurrow burrow =
   let cheapest = MinPQueue.findMin . _queue <$> S.get
       isSolved = solved . snd <$> cheapest
+      -- isSolved = (> 60000) . fst <$> cheapest
       step = S.get >>= solveStep
       solvedST = step `Loops.untilM_` isSolved
       finalised = solvedST >> cheapest
       initialQueue = MinPQueue.singleton 0 burrow
-      initialSet = Set.singleton burrow
-      initialSpace = SolutionSpace initialQueue initialSet
+      initialCosts = Map.singleton burrow 0
+      initialSpace = SolutionSpace initialQueue initialCosts
    in S.evalState finalised initialSpace
 
 -- solutions :: Burrow -> [(Int, Burrow)]
@@ -242,10 +250,27 @@ example =
     . Map.insert (8, 2) (Just A)
     $ emptyBurrow
 
+-- #############
+-- #...........#
+-- ###A#C#B#D###
+--   #B#A#D#C#
+--   #########
+puzzle :: Burrow
+puzzle =
+  Map.insert (2, 1) (Just A)
+    . Map.insert (2, 2) (Just B)
+    . Map.insert (4, 1) (Just C)
+    . Map.insert (4, 2) (Just A)
+    . Map.insert (6, 1) (Just B)
+    . Map.insert (6, 2) (Just D)
+    . Map.insert (8, 1) (Just D)
+    . Map.insert (8, 2) (Just C)
+    $ emptyBurrow
+
 organiseAmphipods :: IO ()
 organiseAmphipods =
-  let (cost, outcome) = solveBurrow example
+  let (cost, outcome) = solveBurrow puzzle
    in do
         print cost
-        putStrLn . displayBurrow $ example
+        putStrLn . displayBurrow $ puzzle
         putStrLn . displayBurrow $ outcome
