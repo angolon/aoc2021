@@ -26,6 +26,8 @@ import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
 import Data.Maybe
 import Data.Monoid (Endo (..), Product (..), Sum (..), getSum)
+import Data.PQueue.Prio.Min (MinPQueue)
+import qualified Data.PQueue.Prio.Min as MinPQueue
 import Data.Ratio
 import Data.Set (Set, member, union, (\\))
 import qualified Data.Set as Set
@@ -35,7 +37,7 @@ import Text.Parsec
 import Text.Parsec.Char
 import Text.Show.Functions
 
-data Amphipod = A | B | C | D deriving (Show, Eq)
+data Amphipod = A | B | C | D deriving (Show, Eq, Ord)
 
 data Cell = Cell {_amphipod :: Maybe Amphipod}
 
@@ -43,11 +45,6 @@ makeLenses ''Cell
 
 type Burrow = Map (Int, Int) (Maybe Amphipod)
 
--- #############
--- #...........#
--- ###B#C#B#D###
---   #A#D#C#A#
---   #########
 emptyBurrow :: Burrow
 emptyBurrow =
   Map.fromList . fmap (,Nothing) $
@@ -87,23 +84,42 @@ moveCost D = 1000
 adjacentCoords :: (Int, Int) -> [(Int, Int)]
 adjacentCoords (x, y) = [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
 
+atTarget :: Burrow -> (Int, Int) -> Bool
+atTarget b (2, 1) =
+  allOf (itraversed . indices (`elem` targetCells A)) (== (Just A)) b
+atTarget b (2, 2) = b ! (2, 2) == Just A
+atTarget b (4, 1) =
+  allOf (itraversed . indices (`elem` targetCells B)) (== (Just B)) b
+atTarget b (4, 2) = b ! (4, 2) == Just B
+atTarget b (6, 1) =
+  allOf (itraversed . indices (`elem` targetCells C)) (== (Just C)) b
+atTarget b (6, 2) = b ! (6, 2) == Just C
+atTarget b (8, 1) =
+  allOf (itraversed . indices (`elem` targetCells D)) (== (Just D)) b
+atTarget b (8, 2) = b ! (8, 2) == Just D
+atTarget _ _ = False
+
 canStop :: Burrow -> (Int, Int) -> Bool
 canStop _ (2, 0) = False
+canStop b (2, 1) =
+  allOf (itraversed . indices (`elem` targetCells A)) (== (Just A)) b
+canStop b (2, 2) = b ! (2, 2) == Just A
 canStop _ (4, 0) = False
+canStop b (4, 1) =
+  allOf (itraversed . indices (`elem` targetCells B)) (== (Just B)) b
+canStop b (4, 2) = b ! (4, 2) == Just B
 canStop _ (6, 0) = False
+canStop b (6, 1) =
+  allOf (itraversed . indices (`elem` targetCells C)) (== (Just C)) b
+canStop b (6, 2) = b ! (6, 2) == Just C
 canStop _ (8, 0) = False
-canStop b (2, _) =
-  allOf (itraversed . indices (`elem` targetCells A) . _Just) (== A) b
-canStop b (4, _) =
-  allOf (itraversed . indices (`elem` targetCells B) . _Just) (== B) b
-canStop b (6, _) =
-  allOf (itraversed . indices (`elem` targetCells C) . _Just) (== C) b
-canStop b (8, _) =
-  allOf (itraversed . indices (`elem` targetCells D) . _Just) (== D) b
+canStop b (8, 1) =
+  allOf (itraversed . indices (`elem` targetCells D)) (== (Just D)) b
+canStop b (8, 2) = b ! (8, 2) == Just D
 canStop _ _ = True
 
-occupied :: Burrow -> [((Int, Int), Amphipod)]
-occupied b = b ^.. (itraversed . _Just . withIndex)
+occupied :: Burrow -> [(Int, Int)]
+occupied b = b ^.. (itraversed . _Just . withIndex . _1)
 
 unoccupied :: Burrow -> [(Int, Int)]
 unoccupied b = b ^.. (itraversed . _Nothing . withIndex . _1)
@@ -137,6 +153,60 @@ nextSteps b cs =
       (Just init) = b ! cs
    in go b init 0 (Set.singleton cs) cs
 
+data SolutionSpace = SolutionSpace
+  { _queue :: MinPQueue Int Burrow,
+    _observedStates :: Set Burrow
+  }
+  deriving (Eq)
+
+makeLenses ''SolutionSpace
+
+movers :: Burrow -> [(Int, Int)]
+movers b = filter (not . atTarget b) . occupied $ b
+
+solved :: Burrow -> Bool
+solved = null . movers
+
+solveStep :: SolutionSpace -> S.State SolutionSpace ()
+solveStep solutionSpace =
+  let ((cost, burrow), nextQueue) = MinPQueue.deleteFindMin . _queue $ solutionSpace
+      newState = not . (`Set.member` (_observedStates solutionSpace))
+      nextBurrowCosts = do
+        mover <- movers burrow
+        (movingCost, moved) <- nextSteps burrow mover
+        guard $ newState moved
+        return (movingCost + cost, moved)
+      nextBurrows = Set.fromList $ fmap snd nextBurrowCosts
+   in S.put $
+        solutionSpace
+          & queue .~ MinPQueue.union nextQueue (MinPQueue.fromList nextBurrowCosts)
+          & observedStates %~ Set.union nextBurrows
+
+solveBurrow :: Burrow -> (Int, Burrow)
+solveBurrow burrow =
+  let cheapest = MinPQueue.findMin . _queue <$> S.get
+      isSolved = solved . snd <$> cheapest
+      step = S.get >>= solveStep
+      solvedST = step `Loops.untilM_` isSolved
+      finalised = solvedST >> cheapest
+      initialQueue = MinPQueue.singleton 0 burrow
+      initialSet = Set.singleton burrow
+      initialSpace = SolutionSpace initialQueue initialSet
+   in S.evalState finalised initialSpace
+
+-- solutions :: Burrow -> [(Int, Burrow)]
+-- solutions b =
+--   let go burrow cost seenStates =
+--         -- TODO: filter out seen states
+--         let movers = filter (not . atTarget burrow) $ occupied burrow
+--          in if null movers
+--               then [(cost, burrow)]
+--               else do
+--                 mover <- movers
+--                 (movingCost, moved) <- nextSteps burrow mover
+--                 go moved (cost + movingCost)
+--    in go b 0
+
 -- canStop b coors =
 --   let occupant = b !? coords
 
@@ -155,5 +225,27 @@ displayBurrow b =
       rows = fmap displayRow [(-1) .. 3]
    in join . List.intersperse "\n" $ rows
 
+-- #############
+-- #...........#
+-- ###B#C#B#D###
+--   #A#D#C#A#
+--   #########
+example :: Burrow
+example =
+  Map.insert (2, 1) (Just B)
+    . Map.insert (2, 2) (Just A)
+    . Map.insert (4, 1) (Just C)
+    . Map.insert (4, 2) (Just D)
+    . Map.insert (6, 1) (Just B)
+    . Map.insert (6, 2) (Just C)
+    . Map.insert (8, 1) (Just D)
+    . Map.insert (8, 2) (Just A)
+    $ emptyBurrow
+
 organiseAmphipods :: IO ()
-organiseAmphipods = putStrLn "lololol"
+organiseAmphipods =
+  let (cost, outcome) = solveBurrow example
+   in do
+        print cost
+        putStrLn . displayBurrow $ example
+        putStrLn . displayBurrow $ outcome
