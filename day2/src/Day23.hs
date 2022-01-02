@@ -54,27 +54,35 @@ emptyBurrow =
       (2, 0),
       (2, 1),
       (2, 2),
+      (2, 3),
+      (2, 4),
       (3, 0),
       (4, 0),
       (4, 1),
       (4, 2),
+      (4, 3),
+      (4, 4),
       (5, 0),
       (6, 0),
       (6, 1),
       (6, 2),
+      (6, 3),
+      (6, 4),
       (7, 0),
       (8, 0),
       (8, 1),
       (8, 2),
+      (8, 3),
+      (8, 4),
       (9, 0),
       (10, 0)
     ]
 
 targetCells :: Amphipod -> [(Int, Int)]
-targetCells A = [(2, 1), (2, 2)]
-targetCells B = [(4, 1), (4, 2)]
-targetCells C = [(6, 1), (6, 2)]
-targetCells D = [(8, 1), (8, 2)]
+targetCells A = (2,) <$> [1 .. 4]
+targetCells B = (4,) <$> [1 .. 4]
+targetCells C = (6,) <$> [1 .. 4]
+targetCells D = (8,) <$> [1 .. 4]
 
 moveCost :: Amphipod -> Int
 moveCost A = 1
@@ -85,39 +93,25 @@ moveCost D = 1000
 adjacentCoords :: (Int, Int) -> [(Int, Int)]
 adjacentCoords (x, y) = [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
 
-atTarget :: Burrow -> (Int, Int) -> Bool
-atTarget b (2, 1) =
-  allOf (itraversed . indices (`elem` targetCells A)) (== (Just A)) b
-atTarget b (2, 2) = b ! (2, 2) == Just A
-atTarget b (4, 1) =
-  allOf (itraversed . indices (`elem` targetCells B)) (== (Just B)) b
-atTarget b (4, 2) = b ! (4, 2) == Just B
-atTarget b (6, 1) =
-  allOf (itraversed . indices (`elem` targetCells C)) (== (Just C)) b
-atTarget b (6, 2) = b ! (6, 2) == Just C
-atTarget b (8, 1) =
-  allOf (itraversed . indices (`elem` targetCells D)) (== (Just D)) b
-atTarget b (8, 2) = b ! (8, 2) == Just D
-atTarget _ _ = False
+targetCellsFullFromBottomTo :: Amphipod -> Int -> Burrow -> Bool
+targetCellsFullFromBottomTo _ 0 = const False
+targetCellsFullFromBottomTo pod y =
+  let is = filter ((>= y) . snd) $ targetCells pod
+   in allOf (itraversed . indices (`elem` is)) (== (Just pod))
 
-canStop :: Burrow -> (Int, Int) -> Bool
-canStop _ (2, 0) = False
-canStop b (2, 1) =
-  allOf (itraversed . indices (`elem` targetCells A)) (== (Just A)) b
-canStop b (2, 2) = b ! (2, 2) == Just A
-canStop _ (4, 0) = False
-canStop b (4, 1) =
-  allOf (itraversed . indices (`elem` targetCells B)) (== (Just B)) b
-canStop b (4, 2) = b ! (4, 2) == Just B
-canStop _ (6, 0) = False
-canStop b (6, 1) =
-  allOf (itraversed . indices (`elem` targetCells C)) (== (Just C)) b
-canStop b (6, 2) = b ! (6, 2) == Just C
-canStop _ (8, 0) = False
-canStop b (8, 1) =
-  allOf (itraversed . indices (`elem` targetCells D)) (== (Just D)) b
-canStop b (8, 2) = b ! (8, 2) == Just D
-canStop _ _ = True
+atTarget :: (Int, Int) -> Burrow -> Bool
+atTarget (2, y) = targetCellsFullFromBottomTo A y
+atTarget (4, y) = targetCellsFullFromBottomTo B y
+atTarget (6, y) = targetCellsFullFromBottomTo C y
+atTarget (8, y) = targetCellsFullFromBottomTo D y
+atTarget _ = const False
+
+canStop :: (Int, Int) -> Burrow -> Bool
+canStop (2, y) = targetCellsFullFromBottomTo A y
+canStop (4, y) = targetCellsFullFromBottomTo B y
+canStop (6, y) = targetCellsFullFromBottomTo C y
+canStop (8, y) = targetCellsFullFromBottomTo D y
+canStop _ = const True
 
 occupied :: Burrow -> [(Int, Int)]
 occupied b = b ^.. (itraversed . _Just . withIndex . _1)
@@ -133,8 +127,8 @@ remove coord b = b & (imapped . indices (== coord)) .~ Nothing
 
 nextSteps :: Burrow -> (Int, Int) -> [(Int, Burrow)]
 nextSteps b cs =
-  let go burrow pod cost visited coords@(x, y)
-        | y == 2 && (coords `elem` (targetCells pod)) = []
+  let go burrow pod cost visited coords
+        | atTarget coords burrow = []
         | otherwise =
           let adjacent =
                 filter (not . (`member` visited))
@@ -148,7 +142,7 @@ nextSteps b cs =
                 let nextBurrow = place pod preStep adj
                 let nextVisited = Set.insert adj visited
                 let nextG = go nextBurrow pod nextCost nextVisited adj
-                if canStop nextBurrow adj
+                if canStop adj nextBurrow
                   then (nextCost, nextBurrow) : nextG
                   else nextG
       (Just init) = b ! cs
@@ -163,7 +157,7 @@ data SolutionSpace = SolutionSpace
 makeLenses ''SolutionSpace
 
 movers :: Burrow -> [(Int, Int)]
-movers b = filter (not . atTarget b) . occupied $ b
+movers b = filter (not . (`atTarget` b)) . occupied $ b
 
 solved :: Burrow -> Bool
 solved = null . movers
@@ -193,10 +187,26 @@ solveBurrow :: Burrow -> (Int, Burrow)
 solveBurrow burrow =
   let cheapest = MinPQueue.findMin . _queue <$> S.get
       isSolved = solved . snd <$> cheapest
-      -- isSolved = (> 60000) . fst <$> cheapest
+      -- isSolved = (> 20000) . fst <$> cheapest
       step = S.get >>= solveStep
       solvedST = step `Loops.untilM_` isSolved
       finalised = solvedST >> cheapest
+      initialQueue = MinPQueue.singleton 0 burrow
+      initialCosts = Map.singleton burrow 0
+      initialSpace = SolutionSpace initialQueue initialCosts
+   in S.evalState finalised initialSpace
+
+pretendSolveBurrow :: Burrow -> [(Int, Burrow)]
+pretendSolveBurrow burrow =
+  let cheapest = MinPQueue.findMin . _queue <$> S.get
+      -- isSolved = solved . snd <$> cheapest
+      isSolved = (== 3088) . fst <$> cheapest
+      step = S.get >>= solveStep
+      solvedST = step `Loops.untilM_` isSolved
+      finalised =
+        solvedST >> do
+          solutions <- S.get
+          return . take 10 . MinPQueue.toList . _queue $ solutions
       initialQueue = MinPQueue.singleton 0 burrow
       initialCosts = Map.singleton burrow 0
       initialSpace = SolutionSpace initialQueue initialCosts
@@ -230,47 +240,105 @@ displayBurrow b =
           Just (Just B) -> 'B'
           Just (Just C) -> 'C'
           Just (Just D) -> 'D'
-      rows = fmap displayRow [(-1) .. 3]
+      rows = fmap displayRow [(-1) .. 5]
    in join . List.intersperse "\n" $ rows
 
 -- #############
 -- #...........#
 -- ###B#C#B#D###
+--   #D#C#B#A#
+--   #D#B#A#C#
 --   #A#D#C#A#
 --   #########
 example :: Burrow
 example =
   Map.insert (2, 1) (Just B)
-    . Map.insert (2, 2) (Just A)
+    . Map.insert (2, 2) (Just D)
+    . Map.insert (2, 3) (Just D)
+    . Map.insert (2, 4) (Just A)
     . Map.insert (4, 1) (Just C)
-    . Map.insert (4, 2) (Just D)
+    . Map.insert (4, 2) (Just C)
+    . Map.insert (4, 3) (Just B)
+    . Map.insert (4, 4) (Just D)
     . Map.insert (6, 1) (Just B)
-    . Map.insert (6, 2) (Just C)
+    . Map.insert (6, 2) (Just B)
+    . Map.insert (6, 3) (Just A)
+    . Map.insert (6, 4) (Just C)
     . Map.insert (8, 1) (Just D)
     . Map.insert (8, 2) (Just A)
+    . Map.insert (8, 3) (Just C)
+    . Map.insert (8, 4) (Just A)
     $ emptyBurrow
 
 -- #############
 -- #...........#
 -- ###A#C#B#D###
+--   #D#C#B#A#
+--   #D#B#A#C#
 --   #B#A#D#C#
 --   #########
 puzzle :: Burrow
 puzzle =
   Map.insert (2, 1) (Just A)
-    . Map.insert (2, 2) (Just B)
+    . Map.insert (2, 2) (Just D)
+    . Map.insert (2, 3) (Just D)
+    . Map.insert (2, 4) (Just B)
     . Map.insert (4, 1) (Just C)
-    . Map.insert (4, 2) (Just A)
+    . Map.insert (4, 2) (Just C)
+    . Map.insert (4, 3) (Just B)
+    . Map.insert (4, 4) (Just A)
     . Map.insert (6, 1) (Just B)
-    . Map.insert (6, 2) (Just D)
+    . Map.insert (6, 2) (Just B)
+    . Map.insert (6, 3) (Just A)
+    . Map.insert (6, 4) (Just D)
     . Map.insert (8, 1) (Just D)
-    . Map.insert (8, 2) (Just C)
+    . Map.insert (8, 2) (Just A)
+    . Map.insert (8, 3) (Just C)
+    . Map.insert (8, 4) (Just C)
     $ emptyBurrow
+
+-- #############
+-- #AA.....B.BD#
+-- ###B#C#.#.###
+-- ###D#C#.#.###
+-- ###D#B#.#C###
+-- ###A#D#C#A###
+-- #############
+borked :: Burrow
+borked =
+  Map.insert (2, 1) (Just B)
+    . Map.insert (2, 2) (Just D)
+    . Map.insert (2, 3) (Just D)
+    . Map.insert (2, 4) (Just A)
+    . Map.insert (4, 1) (Just C)
+    . Map.insert (4, 2) (Just C)
+    . Map.insert (4, 3) (Just B)
+    . Map.insert (4, 4) (Just D)
+    . Map.insert (6, 4) (Just C)
+    . Map.insert (8, 3) (Just C)
+    . Map.insert (8, 4) (Just A)
+    . Map.insert (0, 0) (Just A)
+    . Map.insert (1, 0) (Just A)
+    . Map.insert (7, 0) (Just B)
+    . Map.insert (9, 0) (Just B)
+    . Map.insert (10, 0) (Just D)
+    $ emptyBurrow
+
+-- organiseAmphipods :: IO ()
+-- organiseAmphipods =
+--   -- let steps = pretendSolveBurrow example
+--   let steps = nextSteps borked (4, 1)
+--       display (cost, burrow) = do
+--         print cost
+--         putStrLn . displayBurrow $ burrow
+--    in do
+--         putStrLn . displayBurrow $ borked
+--         traverse_ display steps
 
 organiseAmphipods :: IO ()
 organiseAmphipods =
-  let (cost, outcome) = solveBurrow puzzle
+  let (cost, outcome) = solveBurrow example
    in do
         print cost
-        putStrLn . displayBurrow $ puzzle
+        putStrLn . displayBurrow $ example
         putStrLn . displayBurrow $ outcome
