@@ -126,7 +126,7 @@ remove :: (Int, Int) -> Burrow -> Burrow
 remove coord b = b & (imapped . indices (== coord)) .~ Nothing
 
 nextSteps :: Burrow -> (Int, Int) -> [(Int, Burrow)]
-nextSteps b cs =
+nextSteps b cs@(_, initialY) =
   let go burrow pod cost visited coords
         | atTarget coords burrow = []
         | otherwise =
@@ -142,14 +142,20 @@ nextSteps b cs =
                 let nextBurrow = place pod preStep adj
                 let nextVisited = Set.insert adj visited
                 let nextG = go nextBurrow pod nextCost nextVisited adj
-                if canStop adj nextBurrow
-                  then (nextCost, nextBurrow) : nextG
-                  else nextG
+                -- Amphipods *must* move from the hallway directly
+                -- to their target room. They can't shuffle left and
+                -- right in the hall.
+                -- Thus, if the initial Y coordinate was zero, the only
+                -- valid next step is one that ends at the target.
+                if
+                    | initialY /= 0 && canStop adj nextBurrow -> (nextCost, nextBurrow) : nextG
+                    | atTarget adj nextBurrow -> [(nextCost, nextBurrow)]
+                    | otherwise -> nextG
       (Just init) = b ! cs
    in go b init 0 (Set.singleton cs) cs
 
 data SolutionSpace = SolutionSpace
-  { _queue :: MinPQueue Int Burrow,
+  { _queue :: MinPQueue Int [Burrow],
     _observedStates :: Map Burrow Int
   }
   deriving (Eq)
@@ -164,7 +170,8 @@ solved = null . movers
 
 solveStep :: SolutionSpace -> S.State SolutionSpace ()
 solveStep solutionSpace =
-  let ((cost, burrow), nextQueue) = MinPQueue.deleteFindMin . _queue $ solutionSpace
+  let ((cost, burrows), nextQueue) = MinPQueue.deleteFindMin . _queue $ solutionSpace
+      burrow = head burrows
       cheaperState otherBurrow otherCost =
         let elem = (_observedStates solutionSpace) !? otherBurrow
          in all (> otherCost) elem
@@ -173,8 +180,14 @@ solveStep solutionSpace =
         (movingCost, moved) <- nextSteps burrow mover
         let cost' = cost + movingCost
         guard $ cheaperState moved cost'
-        return (cost', moved)
-      nextMinCostStates = Map.fromList $ fmap swap nextBurrowCosts
+        return (cost', moved : burrows)
+      nextMinCostStates =
+        Map.fromList $
+          fmap
+            ( \(c, bs) ->
+                (head bs, c)
+            )
+            nextBurrowCosts
    in S.put $
         solutionSpace
           & queue .~ MinPQueue.union nextQueue (MinPQueue.fromList nextBurrowCosts)
@@ -183,50 +196,18 @@ solveStep solutionSpace =
           -- more costly potentials
           & observedStates %~ (nextMinCostStates <>)
 
-solveBurrow :: Burrow -> (Int, Burrow)
+solveBurrow :: Burrow -> (Int, [Burrow])
 solveBurrow burrow =
   let cheapest = MinPQueue.findMin . _queue <$> S.get
-      isSolved = solved . snd <$> cheapest
+      isSolved = solved . head . snd <$> cheapest
       -- isSolved = (> 20000) . fst <$> cheapest
       step = S.get >>= solveStep
       solvedST = step `Loops.untilM_` isSolved
       finalised = solvedST >> cheapest
-      initialQueue = MinPQueue.singleton 0 burrow
+      initialQueue = MinPQueue.singleton 0 [burrow]
       initialCosts = Map.singleton burrow 0
       initialSpace = SolutionSpace initialQueue initialCosts
    in S.evalState finalised initialSpace
-
-pretendSolveBurrow :: Burrow -> [(Int, Burrow)]
-pretendSolveBurrow burrow =
-  let cheapest = MinPQueue.findMin . _queue <$> S.get
-      -- isSolved = solved . snd <$> cheapest
-      isSolved = (== 3088) . fst <$> cheapest
-      step = S.get >>= solveStep
-      solvedST = step `Loops.untilM_` isSolved
-      finalised =
-        solvedST >> do
-          solutions <- S.get
-          return . take 10 . MinPQueue.toList . _queue $ solutions
-      initialQueue = MinPQueue.singleton 0 burrow
-      initialCosts = Map.singleton burrow 0
-      initialSpace = SolutionSpace initialQueue initialCosts
-   in S.evalState finalised initialSpace
-
--- solutions :: Burrow -> [(Int, Burrow)]
--- solutions b =
---   let go burrow cost seenStates =
---         -- TODO: filter out seen states
---         let movers = filter (not . atTarget burrow) $ occupied burrow
---          in if null movers
---               then [(cost, burrow)]
---               else do
---                 mover <- movers
---                 (movingCost, moved) <- nextSteps burrow mover
---                 go moved (cost + movingCost)
---    in go b 0
-
--- canStop b coors =
---   let occupant = b !? coords
 
 displayBurrow :: Burrow -> String
 displayBurrow b =
@@ -337,8 +318,9 @@ borked =
 
 organiseAmphipods :: IO ()
 organiseAmphipods =
-  let (cost, outcome) = solveBurrow example
+  let (cost, outcome) = solveBurrow puzzle
    in do
         print cost
-        putStrLn . displayBurrow $ example
-        putStrLn . displayBurrow $ outcome
+        putStrLn . displayBurrow $ puzzle
+        -- traverse_ (putStrLn . displayBurrow) outcome
+        putStrLn . displayBurrow . head $ outcome
