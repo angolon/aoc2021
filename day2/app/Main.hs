@@ -1,6 +1,6 @@
 module Main where
 
-import Day23 (organiseAmphipods)
+import Day24 (enterTheMonad)
 
 main :: IO ()
-main = organiseAmphipods
+main = enterTheMonad
