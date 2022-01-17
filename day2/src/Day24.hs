@@ -132,6 +132,63 @@ runInstruction instr alu =
       opAB = (uncurry op) . ab
    in return $ setR a (opAB alu) alu
 
+data Codependency
+  = Inverted {_r1 :: Register, _r1ToR1 :: Int -> [Int]}
+  | Codependency
+      { _r1 :: Register,
+        _r2ToR1 :: Int -> [Int],
+        _r2 :: Register,
+        _r1ToR2 :: Int -> [Int]
+      }
+
+-- invertInstruction :: Int -> Instruction ->
+invertInstruction (Add a (Reg b)) x =
+  Codependency a (pure . (x -)) b (pure . (x -))
+invertInstruction (Mul a (Reg b)) x =
+  let f y =
+        let z = x `div` y
+            check = z * y == x
+         in if check then [z] else []
+   in Codependency a f b f
+invertInstruction (Div a (Reg b)) x =
+  Codependency
+    a
+    ( \y ->
+        -- a / y = x
+        -- a = y * x
+        let lower = y * x
+            upper = lower + y - 1
+         in [lower .. upper]
+    )
+    b
+    ( \y ->
+        -- y / a = x
+        -- a = y / x
+        let a = y `div` x
+         in if
+                | a < 0 -> error "danger will robinson"
+                | a == 0 -> []
+                | otherwise -> [a]
+    )
+invertInstruction (Mod a (Reg b)) x =
+  Codependency
+    a
+    (\y -> if x >= y then [] else [x, (x + y) ..])
+    b
+    ( \y ->
+        let brutes = filter (\z -> (y `mod` z) == x) [(x + 1) .. (y - x)]
+         in if x == y then [(x + 1) ..] else brutes
+    )
+
+-- invertInstruction (Add a (Const c)) x =
+--   undefined
+
+-- Add
+-- Mul
+-- Div
+-- Mod
+-- Eql
+
 runProgram :: (IntReader m) => [Instruction] -> m ALU
 runProgram =
   let init = return $ ALU 0 0 0 0
