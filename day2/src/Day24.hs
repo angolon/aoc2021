@@ -132,62 +132,55 @@ runInstruction instr alu =
       opAB = (uncurry op) . ab
    in return $ setR a (opAB alu) alu
 
-data Codependency
-  = Inverted {_r1 :: Register, _r1ToR1 :: Int -> [Int]}
+data Inversion
+  = Inverted {_r1 :: Register, _values :: [Int]}
   | Codependency
       { _r1 :: Register,
-        _r2ToR1 :: Int -> [Int],
         _r2 :: Register,
-        _r1ToR2 :: Int -> [Int]
+        _r1ToR2 :: Int -> [Int],
+        _r2ToR1 :: Int -> [Int]
       }
 
 -- invertInstruction :: Int -> Instruction ->
-invertInstruction (Add a (Reg b)) x =
-  Codependency a (pure . (x -)) b (pure . (x -))
-invertInstruction (Mul a (Reg b)) x =
-  let f y =
-        let z = x `div` y
-            check = z * y == x
-         in if check then [z] else []
-   in Codependency a f b f
-invertInstruction (Div a (Reg b)) x =
-  Codependency
-    a
-    ( \y ->
-        -- a / y = x
-        -- a = y * x
-        let lower = y * x
+invertInstruction instr z =
+  let -- x + y = z ==> x = z - y || y = z - x
+      invAddXToY = pure . (z -)
+      invAddYToX = invAddXToY
+      -- x * y = z ==> x = z / y || y = z / x
+      invMulXToY x =
+        let y = z `div` x
+            check = x * y == z
+         in if check then [y] else []
+      invMulYToX = invMulXToY
+      -- x / y = z ==> y = x / z
+      invDivXToY x =
+        let y = x `div` z
+         in if
+                | y < 0 -> error "danger will robinson"
+                | y == 0 -> []
+                | otherwise -> [y]
+      -- x / y = z ==> x = y * z
+      invDivYToX y =
+        let lower = y * z
             upper = lower + y - 1
          in [lower .. upper]
-    )
-    b
-    ( \y ->
-        -- y / a = x
-        -- a = y / x
-        let a = y `div` x
-         in if
-                | a < 0 -> error "danger will robinson"
-                | a == 0 -> []
-                | otherwise -> [a]
-    )
-invertInstruction (Mod a (Reg b)) x =
-  Codependency
-    a
-    (\y -> if x >= y then [] else [x, (x + y) ..])
-    b
-    ( \y ->
-        let brutes = filter (\z -> (y `mod` z) == x) [(x + 1) .. (y - x)]
-         in if x == y then [(x + 1) ..] else brutes
-    )
-
--- invertInstruction (Add a (Const c)) x =
---   undefined
-
--- Add
--- Mul
--- Div
--- Mod
--- Eql
+      invModXToY x =
+        let brutes = filter (\y -> (x `mod` y) == z) [(z + 1) .. (x - z)]
+         in if z == x then [(z + 1) ..] else brutes
+      invModYToX y =
+        if z >= y then [] else [z, (z + y) ..]
+      (xToY, yToX) = case instr of
+        Add _ _ -> (invAddXToY, invAddYToX)
+        Mul _ _ -> (invMulXToY, invMulYToX)
+        Div _ _ -> (invDivXToY, invDivYToX)
+        Mod _ _ -> (invModXToY, invModYToX)
+      a = _a instr
+      b = _b instr
+   in case b of
+        Constant c ->
+          Inverted a (yToX c)
+        Reg r ->
+          Codependency a r xToY yToX
 
 runProgram :: (IntReader m) => [Instruction] -> m ALU
 runProgram =
@@ -197,6 +190,32 @@ runProgram =
 runWithInputs :: [Int] -> [Instruction] -> ALU
 runWithInputs inputs instructions =
   S.evalState (runProgram instructions) inputs
+
+data ProgramGraph
+  = Fork {_instr :: Instruction, _left :: ProgramGraph, _right :: ProgramGraph}
+  | Linear {_instr :: Instruction, _parent :: ProgramGraph}
+  | Terminal {_instr :: Instruction}
+  | Unset
+  deriving (Eq, Show)
+
+graphify :: [Instruction] -> ProgramGraph
+graphify instructions =
+  let go [] = Unset
+      go (i@(Inp _) : _) = Terminal i
+      go (i : is) =
+        let a = _a i
+            b = _b i
+            dropIndependents r = dropWhile ((/= r) . _a) is
+            lhs = dropIndependents a
+         in case b of
+              Constant _ -> Linear i $ go lhs
+              Reg r ->
+                let rhs = dropIndependents r
+                 in Fork i (go lhs) (go rhs)
+   in go . reverse $ instructions
+
+-- blergh prog =
+--   let x =
 
 enterTheMonad :: IO ()
 enterTheMonad = do
