@@ -31,8 +31,6 @@ import Data.Monoid (Endo (..), Product (..), Sum (..), getSum)
 import Data.PQueue.Prio.Min (MinPQueue)
 import qualified Data.PQueue.Prio.Min as MinPQueue
 import Data.Ratio
-import Data.Set (Set, member, union, (\\))
-import qualified Data.Set as Set
 import qualified Data.Vector as V
 import Lib (MyParser, parseInt, parseStdin)
 import Text.Parsec
@@ -70,13 +68,15 @@ getV (Reg r) = getR r
 getV (Constant c) = const c
 
 data Instruction
-  = Inp {_a :: Register}
-  | Add {_a :: Register, _b :: Variable}
-  | Mul {_a :: Register, _b :: Variable}
-  | Div {_a :: Register, _b :: Variable}
-  | Mod {_a :: Register, _b :: Variable}
-  | Eql {_a :: Register, _b :: Variable}
+  = Inp {_lineNumber :: Int, _a :: Register}
+  | Add {_lineNumber :: Int, _a :: Register, _b :: Variable}
+  | Mul {_lineNumber :: Int, _a :: Register, _b :: Variable}
+  | Div {_lineNumber :: Int, _a :: Register, _b :: Variable}
+  | Mod {_lineNumber :: Int, _a :: Register, _b :: Variable}
+  | Eql {_lineNumber :: Int, _a :: Register, _b :: Variable}
   deriving (Eq, Show)
+
+makeLenses ''Instruction
 
 parseProgram :: MyParser [Instruction]
 parseProgram =
@@ -88,9 +88,11 @@ parseProgram =
       parseVariable =
         Reg <$> parseRegister
           <|> Constant <$> parseInt
-      parseInp = Inp <$ try (string "inp ") <*> parseRegister
+      lineNum = sourceLine <$> getPosition
+      parseInp = Inp <$ try (string "inp ") <*> lineNum <*> parseRegister
       instruction constructor name =
         constructor <$ try (string (name ++ " "))
+          <*> lineNum
           <*> parseRegister <* char ' '
           <*> parseVariable
       parseInstruction =
@@ -116,7 +118,7 @@ instance IntReader (S.State [Int]) where
     return x
 
 runInstruction :: (IntReader m) => Instruction -> ALU -> m ALU
-runInstruction (Inp a) alu = do
+runInstruction (Inp _ a) alu = do
   i <- readInt
   return $ setR a i alu
 runInstruction instr alu =
@@ -124,11 +126,11 @@ runInstruction instr alu =
       b = _b instr
       ab = getR a &&& getV b
       op = case instr of
-        (Add _ _) -> (+)
-        (Mul _ _) -> (*)
-        (Div _ _) -> div
-        (Mod _ _) -> mod
-        (Eql _ _) -> (\c d -> if c == d then 1 else 0)
+        (Add _ _ _) -> (+)
+        (Mul _ _ _) -> (*)
+        (Div _ _ _) -> div
+        (Mod _ _ _) -> mod
+        (Eql _ _ _) -> (\c d -> if c == d then 1 else 0)
       opAB = (uncurry op) . ab
    in return $ setR a (opAB alu) alu
 
@@ -170,10 +172,10 @@ invertInstruction instr z =
       invModYToX y =
         if z >= y then [] else [z, (z + y) ..]
       (xToY, yToX) = case instr of
-        Add _ _ -> (invAddXToY, invAddYToX)
-        Mul _ _ -> (invMulXToY, invMulYToX)
-        Div _ _ -> (invDivXToY, invDivYToX)
-        Mod _ _ -> (invModXToY, invModYToX)
+        Add _ _ _ -> (invAddXToY, invAddYToX)
+        Mul _ _ _ -> (invMulXToY, invMulYToX)
+        Div _ _ _ -> (invDivXToY, invDivYToX)
+        Mod _ _ _ -> (invModXToY, invModYToX)
       a = _a instr
       b = _b instr
    in case b of
@@ -187,6 +189,10 @@ runProgram =
   let init = return $ ALU 0 0 0 0
    in foldl (\b a -> b >>= runInstruction a) init
 
+-- runSimplifiedProgram :: (IntReader m) => [Instruction] -> m ALU
+-- runSimplifiedProgram prog =
+--   let g = simplify . graphify $ prog
+
 runWithInputs :: [Int] -> [Instruction] -> ALU
 runWithInputs inputs instructions =
   S.evalState (runProgram instructions) inputs
@@ -195,13 +201,36 @@ data ProgramGraph
   = Fork {_instr :: Instruction, _left :: ProgramGraph, _right :: ProgramGraph}
   | Linear {_instr :: Instruction, _parent :: ProgramGraph}
   | Terminal {_instr :: Instruction}
-  | Unset
-  deriving (Eq, Show)
+  | Unset -- type level way of saying that the register dependency is zero.
+  | Set {_register :: Register, _value :: Int} -- allows us to simplify some graphs down to "set this register to a constant"
+  deriving (Eq)
+
+makeLenses ''ProgramGraph
+
+instance Show ProgramGraph where
+  show =
+    let indent = 2
+        prefix 0 s = s ++ "\n"
+        prefix depth s =
+          let p = replicate ((depth * indent) - 1) ' '
+           in p ++ "|- " ++ s ++ "\n"
+        go depth Unset = prefix depth "UNSET"
+        go depth (Set r c) = prefix depth ("SET " ++ show r ++ ": " ++ show c)
+        go depth (Terminal i) = prefix depth (show i)
+        go depth (Linear i p) =
+          prefix depth (show i) ++ go (depth + 1) p
+        go depth (Fork i l r) =
+          prefix depth (show i)
+            ++ go (depth + 1) l
+            ++ go (depth + 1) r
+     in go 0
 
 graphify :: [Instruction] -> ProgramGraph
 graphify instructions =
   let go [] = Unset
-      go (i@(Inp _) : _) = Terminal i
+      go (i@(Inp _ _) : _) = Terminal i
+      -- go (i@(Mul _ _ (Constant 0)) : _) = Terminal i -- sets register to zero, has no dependencies
+      go (i@(Mul _ _ (Constant 0)) : _) = Unset -- sets register to zero, has no dependencies
       go (i : is) =
         let a = _a i
             b = _b i
@@ -214,12 +243,69 @@ graphify instructions =
                  in Fork i (go lhs) (go rhs)
    in go . reverse $ instructions
 
+emulateInstruction :: Instruction -> Int -> ProgramGraph
+emulateInstruction i arg =
+  let result = case i of
+        (Add _ r (Constant c)) -> Set r (arg + c)
+        (Eql _ r (Constant c))
+          | c == arg -> Set r 1
+          | otherwise -> Unset
+        (Mul _ r (Constant c)) -> Set r (arg * c)
+        (Div _ r (Constant c)) -> Set r (arg `div` c)
+        (Mod _ r (Constant c)) -> Set r (arg `mod` c)
+   in simplify result
+
+simplify :: ProgramGraph -> ProgramGraph
+simplify Unset = Unset
+simplify t@(Terminal _) = t
+simplify s@(Set _ 0) = Unset
+simplify s@(Set _ _) = s
+simplify (Fork i l r) =
+  let simpleL = simplify l
+      simpleR = simplify r
+      setRhs c = i & b .~ (Constant c)
+   in case (simpleL, simpleR) of
+        (Unset, Unset) -> Unset -- ignoring the possibility of (`div` 0) or (`mod` 0)
+        (Set _ c, Set _ d) -> emulateInstruction (setRhs d) c
+        (Set _ c, Unset) -> emulateInstruction (setRhs 0) c
+        (Unset, Set _ d) -> emulateInstruction (setRhs d) 0
+        -- Pretending that the rhs is some constant value:
+        (_, Unset) -> simplify $ Linear (setRhs 0) simpleL
+        (_, Set _ d) -> simplify $ Linear (setRhs d) simpleL
+        (Unset, _) ->
+          -- Mul, Div, and Mod with zero on the LHS will always result in zero, so we can
+          -- replace these instances with `Unset`
+          case i of
+            (Mul _ _ _) -> Unset
+            (Div _ _ _) -> Unset
+            (Mod _ _ _) -> Unset
+            _ -> Fork i Unset simpleR
+        _ -> Fork i simpleL simpleR
+-- multiplying by zero just resets the register, so we can ignore all its dependencies
+simplify (Linear (Mul _ _ (Constant 0)) _) = Unset
+-- Adding zero leaves the register unchanged, so skip this node entirely
+simplify (Linear (Add _ _ (Constant 0)) p) = simplify p
+simplify (Linear i p) =
+  let simpleP = simplify p
+   in case simpleP of
+        Unset -> emulateInstruction i 0
+        Set _ c -> emulateInstruction i c
+        _ -> (Linear i simpleP)
+
+-- If
+
 -- blergh prog =
 --   let x =
+
+-- enterTheMonad :: IO ()
+-- enterTheMonad = do
+--   (Right parsed) <- parseStdin parseProgram
+--   let execd = runWithInputs [7] parsed
+--   print execd
+--   traverse_ print parsed
 
 enterTheMonad :: IO ()
 enterTheMonad = do
   (Right parsed) <- parseStdin parseProgram
-  let execd = runWithInputs [7] parsed
-  print execd
-  traverse_ print parsed
+  let g = simplify . graphify $ parsed
+  print g
