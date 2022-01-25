@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiWayIf #-}
@@ -178,11 +179,20 @@ invertInstruction instr z =
          in if z == x then [(z + 1) ..] else brutes
       invModYToX y =
         if z >= y then [] else [z, (z + y) ..]
+      invEqlXToY x =
+        if z == 1
+          then [x]
+          else error "I don't want to produce this kind of infinity"
+      invLodXToY x = [x]
+      invLodYToX y = error "Too many possibilities"
+      invEqlYToX = invEqlXToY
       (xToY, yToX) = case instr of
         Add _ _ _ -> (invAddXToY, invAddYToX)
         Mul _ _ _ -> (invMulXToY, invMulYToX)
         Div _ _ _ -> (invDivXToY, invDivYToX)
         Mod _ _ _ -> (invModXToY, invModYToX)
+        Eql _ _ _ -> (invEqlXToY, invEqlYToX)
+        Lod _ _ _ -> (invLodXToY, invLodYToX)
       a = _a instr
       b = _b instr
    in case b of
@@ -204,7 +214,7 @@ data ProgramGraph
   = Fork {_instr :: Instruction, _left :: ProgramGraph, _right :: ProgramGraph}
   | Linear {_instr :: Instruction, _parent :: ProgramGraph}
   | Terminal {_instr :: Instruction}
-  deriving (Eq)
+  deriving (Eq, Ord)
 
 makeLenses ''ProgramGraph
 
@@ -255,38 +265,51 @@ emulateInstruction i arg =
    in Terminal (Lod ln a (Constant result))
 
 simplify :: ProgramGraph -> ProgramGraph
-simplify t@(Terminal _) = t
-simplify (Fork i l r) =
-  let simpleL = simplify l
-      simpleR = simplify r
-      setRhs c = i & b .~ (Constant c)
-   in case (simpleL, simpleR) of
-        (Terminal (Lod _ _ (Constant c)), Terminal (Lod _ _ (Constant d))) -> emulateInstruction (setRhs d) c
-        -- Pretending that the rhs is some constant value:
-        (_, Terminal (Lod _ _ (Constant d))) -> simplify $ Linear (setRhs d) simpleL
-        (Terminal (Lod _ _ (Constant 0)), _) ->
-          let reset = Terminal $ Lod (_lineNumber i) (_a i) (Constant 0)
-           in case i of
-                -- Mul, Div, and Mod with zero on the LHS will always result in zero, so we can
-                -- replace these instances with `Lod 0`
-                (Mul _ _ _) -> reset
-                (Div _ _ _) -> reset
-                (Mod _ _ _) -> reset
-                -- Adding to zero is equivalent to a load instruction
-                (Add ln a b) -> Linear (Lod ln a b) simpleR
-                -- Otherwise, we can't simplify any further:
-                _ -> Fork i simpleL simpleR
-        _ -> Fork i simpleL simpleR
--- multiplying by zero just resets the register, so we can ignore all its dependencies
-simplify (Linear (Mul ln a (Constant 0)) _) = Terminal (Lod ln a (Constant 0))
--- Adding zero, or multiplying by 1, leaves the register unchanged, so skip this node entirely
-simplify (Linear (Mul _ _ (Constant 1)) p) = simplify p
-simplify (Linear (Add _ _ (Constant 0)) p) = simplify p
-simplify (Linear i p) =
-  let simpleP = simplify p
-   in case simpleP of
-        Terminal (Lod _ _ (Constant c)) -> emulateInstruction i c
-        _ -> (Linear i simpleP)
+simplify gg =
+  let memoize graph f = do
+        memo <- S.get
+        case memo !? graph of
+          Just simple -> return simple
+          Nothing -> do
+            simple <- f
+            S.modify $ Map.insert graph simple
+            return simple
+      simplifyM t@(Terminal _) = return t
+      -- multiplying by zero just resets the register, so we can ignore all its dependencies
+      simplifyM linear@(Linear (Mul ln a (Constant 0)) _) =
+        memoize linear $ return $ Terminal (Lod ln a (Constant 0))
+      -- Adding zero, or multiplying by 1, leaves the register unchanged, so skip this node entirely
+      simplifyM (Linear (Mul _ _ (Constant 1)) p) = simplifyM p
+      simplifyM (Linear (Add _ _ (Constant 0)) p) = simplifyM p
+      simplifyM linear@(Linear i p) = memoize linear $ do
+        simpleP <- simplifyM p
+        case simpleP of
+          Terminal (Lod _ _ (Constant c)) -> return $ emulateInstruction i c
+          _ -> return (Linear i simpleP)
+      simplifyM fork@(Fork i l r) =
+        let setRhs c = i & b .~ (Constant c)
+         in memoize fork $ do
+              simpleL <- simplifyM l
+              simpleR <- simplifyM r
+              case (simpleL, simpleR) of
+                (Terminal (Lod _ _ (Constant c)), Terminal (Lod _ _ (Constant d))) -> return $ emulateInstruction (setRhs d) c
+                -- Pretending that the rhs is some constant value:
+                (_, Terminal (Lod _ _ (Constant d))) -> simplifyM $ Linear (setRhs d) simpleL
+                (Terminal (Lod _ _ (Constant 0)), _) ->
+                  let reset = Terminal $ Lod (_lineNumber i) (_a i) (Constant 0)
+                      simplified = case i of
+                        -- Mul, Div, and Mod with zero on the LHS will always result in zero, so we can
+                        -- replace these instances with `Lod 0`
+                        (Mul _ _ _) -> reset
+                        (Div _ _ _) -> reset
+                        (Mod _ _ _) -> reset
+                        -- Adding to zero is equivalent to a load instruction
+                        (Add ln a b) -> Linear (Lod ln a b) simpleR
+                        -- Otherwise, we can't simplify any further:
+                        _ -> Fork i simpleL simpleR
+                   in return simplified
+                _ -> return $ Fork i simpleL simpleR
+   in S.evalState (simplifyM gg) Map.empty
 
 linearise :: ProgramGraph -> [Instruction]
 linearise =
