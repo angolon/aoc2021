@@ -323,6 +323,20 @@ graphify instructions =
                               (\a' b' -> f $ Fork i a' b')
                           )
                           afs
+                      order2fs' =
+                        MMap.foldMapWithKey
+                          ( \k fs ->
+                              let fs' =
+                                    fmap
+                                      ( \f ->
+                                          ( \a' b' ->
+                                              f (constructor a') b'
+                                          )
+                                      )
+                                      fs
+                               in MMap.singleton (a, k) fs'
+                          )
+                          order2fs
                    in S.modify (& order2 %~ MMap.insert (a, r) afs')
 
               return ()
