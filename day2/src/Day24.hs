@@ -234,10 +234,22 @@ instance Show ProgramGraph where
             ++ go (depth + 1) r
      in go 0
 
+memoize :: (Ord k) => k -> S.State (Map k a) a -> S.State (Map k a) a
+memoize k computeA = do
+  memo <- S.get
+  case memo !? k of
+    Just a -> return a
+    Nothing -> do
+      a <- computeA
+      S.modify $ Map.insert k a
+      return a
+
 graphify :: [Instruction] -> ProgramGraph
 graphify instructions =
-  let go (i@(Inp _ _) : _) = Terminal i
-      go ((Mul ln a (Constant 0)) : _) = Terminal (Lod ln a (Constant 0)) -- sets register to zero, has no dependencies
+  let go (i@(Inp _ _) : _) = memoize i $ return $ Terminal i
+      go (i@(Mul ln a (Constant 0)) : _) =
+        -- sets register to zero, has no dependencies
+        memoize i $ return $ Terminal (Lod ln a (Constant 0))
       go (i : is) =
         let a = _a i
             b = _b i
@@ -247,13 +259,22 @@ graphify instructions =
                in case dependency of
                     Just l -> l
                     -- Hack: negative line numbers to shoe-horn in explicit load zero instructions
-                    Nothing -> Terminal (Lod (-1) a (Constant 0))
-         in case b of
-              Constant _ -> Linear i $ definitelyGo a
-              Reg r -> Fork i (definitelyGo a) (definitelyGo r)
+                    Nothing ->
+                      return $ Terminal (Lod (-1) a (Constant 0))
+         in memoize i $ case b of
+              Constant _ ->
+                do
+                  parent <- definitelyGo a
+                  return $ Linear i parent
+              Reg r ->
+                do
+                  lhs <- definitelyGo a
+                  rhs <- definitelyGo r
+                  return $ Fork i lhs rhs
       maybeGo [] = Nothing
       maybeGo xs = Just . go $ xs
-   in go . reverse $ instructions
+      graphState = go . reverse $ instructions
+   in S.evalState graphState Map.empty
 
 emulateInstruction :: Instruction -> Int -> ProgramGraph
 emulateInstruction i arg =
@@ -266,15 +287,7 @@ emulateInstruction i arg =
 
 simplify :: ProgramGraph -> ProgramGraph
 simplify gg =
-  let memoize graph f = do
-        memo <- S.get
-        case memo !? graph of
-          Just simple -> return simple
-          Nothing -> do
-            simple <- f
-            S.modify $ Map.insert graph simple
-            return simple
-      simplifyM t@(Terminal _) = return t
+  let simplifyM t@(Terminal _) = return t
       -- multiplying by zero just resets the register, so we can ignore all its dependencies
       simplifyM linear@(Linear (Mul ln a (Constant 0)) _) =
         memoize linear $ return $ Terminal (Lod ln a (Constant 0))
