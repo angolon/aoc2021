@@ -237,7 +237,7 @@ instance Show ProgramGraph where
 graphify :: [Instruction] -> ProgramGraph
 graphify instructions =
   let go (i@(Inp _ _) : _) = Terminal i
-      -- go ((Mul ln a (Constant 0)) : _) = Terminal (Lod ln a (Constant 0)) -- sets register to zero, has no dependencies
+      go ((Mul ln a (Constant 0)) : _) = Terminal (Lod ln a (Constant 0)) -- sets register to zero, has no dependencies
       go (i : is) =
         let a = _a i
             b = _b i
@@ -313,12 +313,22 @@ simplify gg =
 
 linearise :: ProgramGraph -> [Instruction]
 linearise =
-  let go (Terminal instr) = [instr]
+  let merge xs [] = xs
+      merge [] ys = ys
+      merge xs@(x : xs') ys@(y : ys') =
+        let lnX = _lineNumber x
+            lnY = _lineNumber y
+         in if
+                | x == y -> xs -- the paths have merged, and should now be identical.
+                | lnX > lnY -> x : merge xs' ys
+                | lnY > lnX -> y : merge xs ys'
+
+      go (Terminal instr) = [instr]
       go (Linear instr parent) = (instr :) . go $ parent
       go (Fork instr left right) =
-        let leftL = Set.fromList $ go left
-            rightL = Set.fromList $ go right
-            all = List.sortOn (Down . _lineNumber) . Set.toList $ leftL `union` rightL
+        let leftL = go left
+            rightL = go right
+            all = merge leftL rightL
          in instr : all
    in reverse . go
 
