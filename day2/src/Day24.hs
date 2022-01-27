@@ -234,9 +234,105 @@ instance Show ProgramGraph where
             ++ go (depth + 1) r
      in go 0
 
+memoize :: (Ord k) => k -> S.State (Map k a) a -> S.State (Map k a) a
+memoize k computeA = do
+  memo <- S.get
+  case memo !? k of
+    Just a -> return a
+    Nothing -> do
+      a <- computeA
+      S.modify $ Map.insert k a
+      return a
+
+data GraphifyS = GraphifyS
+  { _order1 :: MonoidalMap Register [ProgramGraph -> ProgramGraph],
+    _order2 :: MonoidalMap (Register, Register) [ProgramGraph -> ProgramGraph -> ProgramGraph],
+    _completed :: [ProgramGraph]
+  }
+
+makeLenses ''GraphifyS
+
 graphify :: [Instruction] -> ProgramGraph
 graphify instructions =
-  let go (i@(Inp _ _) : _) = Terminal i
+  let go2 ::
+        [Instruction] -> S.State GraphifyS ()
+      go2 (i : is) =
+        let a = _a i
+            b = _b i
+            blah :: S.State GraphifyS ()
+            blah = do
+              afs <- (^.. order1 . itraversed . index a . traversed) <$> S.get
+              bfs <- (^.. order2 . itraversed . indices ((== a) . fst) . withIndex) <$> S.get
+              cfs <- (^.. order2 . itraversed . indices ((== a) . snd) . withIndex) <$> S.get
+              let cfs' = cfs & mapped . _2 . mapped %~ flip
+              let bfs' = bfs & mapped . _1 %~ fst
+              let cfs'' = cfs & mapped . _1 %~ snd
+              let order2fs = foldMap (uncurry MMap.singleton) (bfs' ++ cfs'')
+              let dfs = bfs ++ cfs'
+              let dKeys = fmap fst dfs
+              -- Regardless of what kind of instruction we're graphifying, any order1 constructors
+              -- depending on register a will be subsumed.
+              -- We'll need to replace all matching order2 constructors with order1 constructors
+              -- which we've partially applied?
+              let staleOrder2Keys = MMap.fromList . fmap (,()) $ dKeys
+              S.modify
+                ( \st ->
+                    st & order1 %~ MMap.delete a
+                      & order2 %~ (MMap.\\ staleOrder2Keys)
+                )
+              -- TODO: fixup the state.
+              let finishers =
+                    let t = Terminal i
+                        finished = fmap ($ t) $ afs
+                        unfinished = MMap.map (fmap ($ t)) order2fs
+                     in S.modify
+                          ( \st ->
+                              st & completed %~ (finished ++)
+                                & order1 %~ (unfinished <>)
+                          )
+              case (i, b) of
+                ((Inp _ _), _) -> finishers
+                ((Mul ln a (Constant 0)), _) -> finishers
+                (_, (Constant _)) ->
+                  let constructor = Linear i
+                      afs' = fmap (. constructor) afs
+                      order2fs' =
+                        MMap.foldMapWithKey
+                          ( \k fs ->
+                              let fs' =
+                                    fmap
+                                      ( \f ->
+                                          ( \a' b' ->
+                                              f (constructor a') b'
+                                          )
+                                      )
+                                      fs
+                               in MMap.singleton (a, k) fs'
+                          )
+                          order2fs
+                   in S.modify
+                        ( \st ->
+                            st & order1 %~ MMap.insert a afs'
+                              & order2 %~ (order2fs' <>)
+                        )
+                (_, (Reg r)) ->
+                  let constructor = Fork i
+                      afs' =
+                        fmap
+                          ( \f ->
+                              (\a' b' -> f $ Fork i a' b')
+                          )
+                          afs
+                   in S.modify (& order2 %~ MMap.insert (a, r) afs')
+
+              return ()
+         in -- bfs = filter ((== a) . fst . fst) order2
+            -- cfs = filter ((== a) . snd . fst) $ order2
+            -- newOrder1s = case i of
+            --   (Inp _ _) -> Map.delete a order1
+            --   (Mul ln a (Constant 0)) -> Map.delete a order1
+            undefined
+      go (i@(Inp _ _) : _) = Terminal i
       go ((Mul ln a (Constant 0)) : _) = Terminal (Lod ln a (Constant 0)) -- sets register to zero, has no dependencies
       go (i : is) =
         let a = _a i
@@ -266,14 +362,7 @@ emulateInstruction i arg =
 
 simplify :: ProgramGraph -> ProgramGraph
 simplify gg =
-  let memoize graph f = do
-        memo <- S.get
-        case memo !? graph of
-          Just simple -> return simple
-          Nothing -> do
-            simple <- f
-            S.modify $ Map.insert graph simple
-            return simple
+  let simplifyM :: ProgramGraph -> S.State (Map ProgramGraph ProgramGraph) ProgramGraph
       simplifyM t@(Terminal _) = return t
       -- multiplying by zero just resets the register, so we can ignore all its dependencies
       simplifyM linear@(Linear (Mul ln a (Constant 0)) _) =
