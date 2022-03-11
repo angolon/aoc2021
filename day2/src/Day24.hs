@@ -122,7 +122,7 @@ instance IntReader (S.State [Int]) where
     S.put tail
     return x
 
-instructionOp :: Instruction -> Int -> Int -> Int
+instructionOp :: (Integral a) => Instruction -> a -> a -> a
 instructionOp (Add _ _ _) = (+)
 instructionOp (Mul _ _ _) = (*)
 instructionOp (Div _ _ _) = div
@@ -153,10 +153,12 @@ data Inversion
 
 -- invertInstruction :: Int -> Instruction ->
 invertInstruction instr z =
-  let -- x + y = z ==> x = z - y || y = z - x
+  let representable = [-14 ..]
+      -- x + y = z ==> x = z - y || y = z - x
       invAddXToY = pure . (z -)
       invAddYToX = invAddXToY
       -- x * y = z ==> x = z / y || y = z / x
+      invMulXToY 0 = representable
       invMulXToY x =
         let y = z `div` x
             check = x * y == z
@@ -182,10 +184,11 @@ invertInstruction instr z =
       invEqlXToY x =
         if z == 1
           then [x]
-          else error "I don't want to produce this kind of infinity"
-      invLodXToY x = [x]
-      invLodYToX y = error "Too many possibilities"
+          else -- else error "I don't want to produce this kind of infinity"
+            filter (/= x) representable
       invEqlYToX = invEqlXToY
+      invLodXToY x = [x]
+      invLodYToX y = representable
       (xToY, yToX) = case instr of
         Add _ _ _ -> (invAddXToY, invAddYToX)
         Mul _ _ _ -> (invMulXToY, invMulYToX)
@@ -344,6 +347,47 @@ linearise =
             all = merge leftL rightL
          in instr : all
    in reverse . go
+
+clamp :: ProgramGraph -> (Int, Int)
+clamp (Terminal (Inp _ _)) = (1, 9)
+clamp (Linear (Eql _ _ _) _) = (0, 1)
+clamp (Fork (Eql _ _ _) _ _) = (0, 1)
+clamp (Terminal (Lod _ _ (Constant c))) = (c, c)
+clamp (Linear (Lod _ _ _) p) = clamp p
+clamp (Linear i p) =
+  let op = instructionOp i
+      c = _c . _b $ i
+      (lower, upper) = clamp p
+      a = lower `op` c
+      b = upper `op` c
+   in (min a b, max a b)
+clamp (Fork i l r) =
+  let (lowerL, upperL) = clamp l
+      (lowerR, upperR) = clamp r
+      op = instructionOp i
+      results = op <$> [lowerL, upperL] <*> [lowerR, upperR]
+   in (minimum results, maximum results)
+
+solve (Fork instr l r) out =
+  let inv = invertInstruction instr out
+      lBounds@(lMin, lMax) = clamp l
+      rBounds@(rMin, rMax) = clamp r
+      between a (b, c) = b <= a && a <= c
+      -- solveL rs = do
+      blargh graphA boundsA graphB boundsB invF = do
+        let (lowerB, upperB) = boundsB
+        b <- [lowerB .. upperB]
+        a <- invF b
+        guard $ a `between` boundsA
+        return a
+      -- find the smaller range to examine possibilities over:
+      lSpaceSize = lMax - lMin
+      rSpaceSize = rMax - rMin
+      blah =
+        if lSpaceSize >= rSpaceSize
+          then blargh l lBounds r rBounds $ _r2ToR1 inv
+          else blargh r rBounds l lBounds $ _r1ToR2 inv
+   in blah
 
 runWithInputs :: [Int] -> [Instruction] -> ALU
 runWithInputs inputs instructions =
