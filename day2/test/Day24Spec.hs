@@ -88,7 +88,7 @@ unit_clampNegMul =
           (Mul 5 X (Reg W))
         ]
       g = simplify . graphify $ instrs
-   in clamp g `shouldBe` (-16, 16)
+   in clamp g `shouldBe` (Range (-16) 16)
 
 -- TODO: how handle negative mod operands
 --

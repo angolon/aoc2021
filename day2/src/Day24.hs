@@ -11,14 +11,14 @@
 module Day24 where
 
 import Control.Arrow
-import Control.Lens
+import Control.Lens hiding (contains)
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
 import qualified Control.Monad.Loops as Loops
 import qualified Control.Monad.State.Lazy as S
 import Data.Bifunctor.Swap (swap)
 import Data.Either (either)
-import Data.Foldable
+import Data.Foldable hiding (toList)
 import Data.Function (on)
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
@@ -27,11 +27,11 @@ import Data.Map (Map, (!), (!?))
 import qualified Data.Map as Map
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
-import Data.Maybe
+import qualified Data.Maybe as Maybe
 import Data.Monoid (Endo (..), Product (..), Sum (..), getSum)
 import Data.Ord (Down (..))
-import Data.PQueue.Prio.Min (MinPQueue)
-import qualified Data.PQueue.Prio.Min as MinPQueue
+import Data.PQueue.Prio.Max (MaxPQueue)
+import qualified Data.PQueue.Prio.Max as MaxPQueue
 import Data.Ratio
 import Data.Set (Set (..), union)
 import qualified Data.Set as Set
@@ -348,57 +348,90 @@ linearise =
          in instr : all
    in reverse . go
 
-clamp :: ProgramGraph -> (Int, Int)
-clamp (Terminal (Inp _ _)) = (1, 9)
-clamp (Linear (Eql _ _ _) _) = (0, 1)
-clamp (Fork (Eql _ _ _) _ _) = (0, 1)
-clamp (Terminal (Lod _ _ (Constant c))) = (c, c)
+data Bound = Range Int Int | Elements (Set Int)
+  deriving (Show, Eq, Ord)
+
+size :: Bound -> Int
+size (Range a b) = b - a + 1
+size (Elements es) = Set.size es
+
+contains :: Bound -> Int -> Bool
+contains (Range b c) a = b <= a && a <= c
+contains (Elements es) a = Set.member a es
+
+toList :: Bound -> [Int]
+toList (Range a b) = [a .. b]
+toList (Elements es) = Set.toList es
+
+clamp :: ProgramGraph -> Bound
+clamp (Terminal (Inp _ _)) = Range 1 9
+clamp (Linear (Eql _ _ _) _) = Range 0 1
+clamp (Fork (Eql _ _ _) _ _) = Range 0 1
+clamp (Terminal (Lod _ _ (Constant c))) = Range c c
 clamp (Linear (Lod _ _ _) p) = clamp p
 clamp (Linear i p) =
   let op = instructionOp i
       c = _c . _b $ i
-      (lower, upper) = clamp p
+      (Range lower upper) = clamp p
       a = lower `op` c
       b = upper `op` c
-   in (min a b, max a b)
+   in Range (min a b) (max a b)
 clamp (Fork i l r) =
-  let (lowerL, upperL) = clamp l
-      (lowerR, upperR) = clamp r
+  let (Range lowerL upperL) = clamp l
+      (Range lowerR upperR) = clamp r
       op = instructionOp i
       results = op <$> [lowerL, upperL] <*> [lowerR, upperR]
-   in (minimum results, maximum results)
+   in Range (minimum results) (maximum results)
 
-solve :: ProgramGraph -> Int -> (Set Int, Set Int)
-solve (Fork instr l r) out =
-  let inv = invertInstruction instr out
-      lBounds@(lMin, lMax) = clamp l
-      rBounds@(rMin, rMax) = clamp r
-      between (b, c) a = b <= a && a <= c
+-- The 'N' stands for non-deterministic :-P
+type NALU = Map Register (Set Int)
+
+possibleOutputs :: NALU -> ProgramGraph -> Bound
+possibleOutputs nalu g =
+  let maybeOutputs = (fmap Elements) . (nalu !?) . _a . _instr $ g
+      clampOutputs = clamp g
+   in Maybe.fromMaybe clampOutputs maybeOutputs
+
+solve :: ProgramGraph -> NALU -> NALU
+solve (Fork instr l r) nalu =
+  let a = _a instr
+      b = _r . _b $ instr
+      -- We can't infer the possible input A register values from the current
+      -- state of the NALU, so we always need to use the `clamp` function to
+      -- guess what they could be.
+      as = clamp l
+      -- The possible B register values may already be known in the NALU.
+      -- (they won't change as a result of this instruction)
+      bs =
+        let maybeBs = fmap Elements $ nalu !? b
+            clampedBs = clamp r
+         in Maybe.fromMaybe clampedBs maybeBs
+      outputAs = Set.toList $ nalu ! a
       -- Eliminate any infinite inversion output lists
-      rangeInBounds :: (Int, Int) -> [Int] -> [Int]
-      rangeInBounds bounds = takeWhile (between bounds) . dropWhile (not . between bounds)
-      solveBtoA graphA boundsA graphB boundsB@(lowerB, upperB) bToA aToB =
-        let bs = [lowerB .. upperB]
-            as = bs >>= rangeInBounds boundsA . bToA
-            -- Some `b`s in the range of `bs` may produce
-            -- an `a` value which is not in the range of `as`.
-            -- They may even produce no `a` at all.
-            -- Filter these `bs` out.
-            bs' = as >>= rangeInBounds boundsB . aToB
-         in (Set.fromList as, Set.fromList bs')
+      rangeInBounds :: Bound -> [Int] -> [Int]
+      rangeInBounds bounds = takeWhile (contains bounds) . dropWhile (not . contains bounds)
+      solveYtoX graphX boundsX graphY boundsY cyToX cxToY =
+        let ys = toList boundsY
+            xs = rangeInBounds boundsX $ (cyToX <*> ys) >>= id
+            -- Some `y`s in the range of `ys` may produce
+            -- an `x` value which is not in the range of `xs`.
+            -- They may even produce no `x` at all.
+            -- Filter these `ys` out.
+            ys' = rangeInBounds boundsY $ (cxToY <*> xs) >>= id
+         in (Set.fromList xs, Set.fromList ys')
       -- find the smaller range to examine possibilities over:
-      lSpaceSize = lMax - lMin
-      rSpaceSize = rMax - rMin
-      lToR = _r1ToR2 inv
-      rToL = _r2ToR1 inv
-      answers =
-        if lSpaceSize >= rSpaceSize
-          then solveBtoA l lBounds r rBounds rToL lToR
+      aSpaceSize = size as
+      bSpaceSize = size bs
+      lToR = _r1ToR2 . invertInstruction instr <$> outputAs
+      rToL = _r2ToR1 . invertInstruction instr <$> outputAs
+      (as', bs') =
+        if aSpaceSize >= bSpaceSize
+          then solveYtoX l as r bs rToL lToR
           else -- Inverting in the other direction, so we need to swap
           -- the answers for the left register back into the left
           -- element of the tuple.
-            swap $ solveBtoA r rBounds l lBounds lToR rToL
-   in answers
+            swap $ solveYtoX r bs l as lToR rToL
+   in Map.fromList [(a, as'), (b, bs')] <> nalu
 
 runWithInputs :: [Int] -> [Instruction] -> ALU
 runWithInputs inputs instructions =
@@ -420,6 +453,7 @@ enterTheMonad = do
   (Right parsed) <- parseStdin parseProgram
   let simple1 = simplify . graphify $ parsed
   let p1 = linearise simple1
+  let initial = Map.singleton Z $ Set.singleton 0
   traverse_ print p1
-  print $ solve simple1 0
+  print $ solve simple1 initial
   print $ clamp simple1
