@@ -372,21 +372,23 @@ solve (Fork instr l r) out =
   let inv = invertInstruction instr out
       lBounds@(lMin, lMax) = clamp l
       rBounds@(rMin, rMax) = clamp r
-      between a (b, c) = b <= a && a <= c
-      -- solveL rs = do
-      blargh graphA boundsA graphB boundsB invF = do
+      between (b, c) a = b <= a && a <= c
+      -- Eliminate any infinite inversion output lists
+      rangeInBounds :: (Int, Int) -> [Int] -> [Int]
+      rangeInBounds bounds = takeWhile (between bounds) . dropWhile (not . between bounds)
+      solveBtoA :: ProgramGraph -> (Int, Int) -> ProgramGraph -> (Int, Int) -> (Int -> [Int]) -> [Int]
+      solveBtoA graphA boundsA graphB boundsB invF = do
         let (lowerB, upperB) = boundsB
         b <- [lowerB .. upperB]
-        a <- invF b
-        guard $ a `between` boundsA
+        a <- rangeInBounds boundsA . invF $ b
         return a
       -- find the smaller range to examine possibilities over:
       lSpaceSize = lMax - lMin
       rSpaceSize = rMax - rMin
       blah =
         if lSpaceSize >= rSpaceSize
-          then blargh l lBounds r rBounds $ _r2ToR1 inv
-          else blargh r rBounds l lBounds $ _r1ToR2 inv
+          then solveBtoA l lBounds r rBounds $ _r2ToR1 inv
+          else solveBtoA r rBounds l lBounds $ _r1ToR2 inv
    in blah
 
 runWithInputs :: [Int] -> [Instruction] -> ALU
@@ -407,4 +409,8 @@ runWithInputs2 inputs instructions =
 enterTheMonad :: IO ()
 enterTheMonad = do
   (Right parsed) <- parseStdin parseProgram
-  traverse_ print . linearise . simplify . graphify $ parsed
+  let simple1 = simplify . graphify $ parsed
+  let p1 = linearise simple1
+  traverse_ print p1
+  print $ solve simple1 0
+  print $ clamp simple1
