@@ -33,7 +33,7 @@ import Data.Ord (Down (..))
 import Data.PQueue.Prio.Min (MinPQueue)
 import qualified Data.PQueue.Prio.Min as MinPQueue
 import Data.Ratio
-import Data.Set (union)
+import Data.Set (Set (..), union)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import Lib (MyParser, parseInt, parseStdin)
@@ -368,6 +368,7 @@ clamp (Fork i l r) =
       results = op <$> [lowerL, upperL] <*> [lowerR, upperR]
    in (minimum results, maximum results)
 
+solve :: ProgramGraph -> Int -> (Set Int, Set Int)
 solve (Fork instr l r) out =
   let inv = invertInstruction instr out
       lBounds@(lMin, lMax) = clamp l
@@ -376,20 +377,28 @@ solve (Fork instr l r) out =
       -- Eliminate any infinite inversion output lists
       rangeInBounds :: (Int, Int) -> [Int] -> [Int]
       rangeInBounds bounds = takeWhile (between bounds) . dropWhile (not . between bounds)
-      solveBtoA :: ProgramGraph -> (Int, Int) -> ProgramGraph -> (Int, Int) -> (Int -> [Int]) -> [Int]
-      solveBtoA graphA boundsA graphB boundsB invF = do
-        let (lowerB, upperB) = boundsB
-        b <- [lowerB .. upperB]
-        a <- rangeInBounds boundsA . invF $ b
-        return a
+      solveBtoA graphA boundsA graphB boundsB@(lowerB, upperB) bToA aToB =
+        let bs = [lowerB .. upperB]
+            as = bs >>= rangeInBounds boundsA . bToA
+            -- Some `b`s in the range of `bs` may produce
+            -- an `a` value which is not in the range of `as`.
+            -- They may even produce no `a` at all.
+            -- Filter these `bs` out.
+            bs' = as >>= rangeInBounds boundsB . aToB
+         in (Set.fromList as, Set.fromList bs')
       -- find the smaller range to examine possibilities over:
       lSpaceSize = lMax - lMin
       rSpaceSize = rMax - rMin
-      blah =
+      lToR = _r1ToR2 inv
+      rToL = _r2ToR1 inv
+      answers =
         if lSpaceSize >= rSpaceSize
-          then solveBtoA l lBounds r rBounds $ _r2ToR1 inv
-          else solveBtoA r rBounds l lBounds $ _r1ToR2 inv
-   in blah
+          then solveBtoA l lBounds r rBounds rToL lToR
+          else -- Inverting in the other direction, so we need to swap
+          -- the answers for the left register back into the left
+          -- element of the tuple.
+            swap $ solveBtoA r rBounds l lBounds lToR rToL
+   in answers
 
 runWithInputs :: [Int] -> [Instruction] -> ALU
 runWithInputs inputs instructions =
