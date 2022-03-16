@@ -11,6 +11,7 @@
 module Day24 where
 
 import Control.Arrow
+import Control.Exception (assert)
 import Control.Lens hiding (contains)
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
@@ -363,12 +364,28 @@ toList :: Bound -> [Int]
 toList (Range a b) = [a .. b]
 toList (Elements es) = Set.toList es
 
+toSet :: Bound -> Set Int
+toSet (Elements es) = es
+toSet range = Set.fromList . toList $ range
+
+rangeInBounds :: Bound -> [Int] -> [Int]
+rangeInBounds bounds = takeWhile (contains bounds) . dropWhile (not . contains bounds)
+
 clamp :: ProgramGraph -> Bound
 clamp (Terminal (Inp _ _)) = Range 1 9
 clamp (Linear (Eql _ _ _) _) = Range 0 1
 clamp (Fork (Eql _ _ _) _ _) = Range 0 1
 clamp (Terminal (Lod _ _ (Constant c))) = Range c c
 clamp (Linear (Lod _ _ _) p) = clamp p
+clamp (Fork (Mod _ _ _) l r) =
+  let (Range _ upperL) = clamp l
+      (Range _ upperR) = clamp r
+      upperest = if upperL >= upperR then upperR - 1 else upperL
+   in Range 0 upperest
+clamp (Linear (Mod _ _ (Constant c)) p) =
+  let (Range _ upperL) = clamp p
+      upperest = if upperL >= c then c - 1 else upperL
+   in Range 0 upperest
 clamp (Linear i p) =
   let op = instructionOp i
       c = _c . _b $ i
@@ -386,13 +403,44 @@ clamp (Fork i l r) =
 -- The 'N' stands for non-deterministic :-P
 type NALU = Map Register (Set Int)
 
-possibleOutputs :: NALU -> ProgramGraph -> Bound
-possibleOutputs nalu g =
+possibleValues :: NALU -> ProgramGraph -> Bound
+possibleValues nalu g =
   let maybeOutputs = (fmap Elements) . (nalu !?) . _a . _instr $ g
       clampOutputs = clamp g
    in Maybe.fromMaybe clampOutputs maybeOutputs
 
 solve :: ProgramGraph -> NALU -> NALU
+-- Inp and Lod instructions don't allow us to infer anything about the value that might
+-- have been in register A before it was executed.
+-- We have to clear the possible values of register A before moving onto
+-- the previous instruction.
+solve (Terminal (Inp _ a)) nalu = Map.delete a nalu
+solve (Terminal (Lod _ a (Constant c))) nalu =
+  let as = nalu ! a
+      nalu' = Map.delete a nalu
+   in assert (Set.member c as) nalu'
+solve (Linear (Lod _ a (Reg b)) p) nalu =
+  -- Weird case that is constructed through simplification of the program graph.
+  -- This simply copies the value of register B into register A
+  -- For such an instruction, we should be able to get away with setting the
+  -- new values B to the intersection of their current possible
+  -- values.
+  -- Like the other `Lod` case, we will still need to clear the possible values
+  -- for register A, as we can't infer anything about its previous value from
+  -- a load instruction.
+  let as = nalu ! a
+      bs = toSet $ possibleValues nalu p
+      bs' = Set.intersection as bs
+      nalu' = Map.delete a . Map.insert b bs' $ nalu
+   in assert (not . Set.null $ bs') nalu'
+solve (Linear instr p) nalu =
+  let a = _a instr
+      (Constant b) = _b instr
+      outputAs = Set.toList $ nalu ! a
+      aBounds = clamp p
+      as = rangeInBounds aBounds . _values . invertInstruction instr <$> outputAs
+      as' = foldMap Set.fromList as
+   in Map.insert a as' nalu
 solve (Fork instr l r) nalu =
   let a = _a instr
       b = _r . _b $ instr
@@ -402,14 +450,9 @@ solve (Fork instr l r) nalu =
       as = clamp l
       -- The possible B register values may already be known in the NALU.
       -- (they won't change as a result of this instruction)
-      bs =
-        let maybeBs = fmap Elements $ nalu !? b
-            clampedBs = clamp r
-         in Maybe.fromMaybe clampedBs maybeBs
+      bs = possibleValues nalu r
       outputAs = Set.toList $ nalu ! a
       -- Eliminate any infinite inversion output lists
-      rangeInBounds :: Bound -> [Int] -> [Int]
-      rangeInBounds bounds = takeWhile (contains bounds) . dropWhile (not . contains bounds)
       solveYtoX graphX boundsX graphY boundsY cyToX cxToY =
         let ys = toList boundsY
             xs = rangeInBounds boundsX $ (cyToX <*> ys) >>= id
@@ -433,6 +476,24 @@ solve (Fork instr l r) nalu =
             swap $ solveYtoX r bs l as lToR rToL
    in Map.fromList [(a, as'), (b, bs')] <> nalu
 
+solveBackwards :: ProgramGraph -> NALU -> [(Int, NALU)]
+solveBackwards program nalu =
+  let go nalu Nothing = []
+      go nalu (Just (g, queue)) =
+        let nalu' = solve g nalu
+            ln = g ^. instr . lineNumber
+            queue' = case g of
+              Terminal _ -> queue
+              Linear _ p ->
+                let lineNo = p ^. instr . lineNumber
+                 in Map.insert lineNo p queue
+              Fork _ l r ->
+                let lLine = l ^. instr . lineNumber
+                    rLine = r ^. instr . lineNumber
+                 in Map.insert lLine l . Map.insert rLine r $ queue
+         in (ln, nalu') : (go nalu' $ Map.maxView queue')
+   in go nalu $ Just (program, Map.empty)
+
 runWithInputs :: [Int] -> [Instruction] -> ALU
 runWithInputs inputs instructions =
   S.evalState (runProgram instructions) inputs
@@ -453,7 +514,39 @@ enterTheMonad = do
   (Right parsed) <- parseStdin parseProgram
   let simple1 = simplify . graphify $ parsed
   let p1 = linearise simple1
-  let initial = Map.singleton Z $ Set.singleton 0
-  traverse_ print p1
-  print $ solve simple1 initial
-  print $ clamp simple1
+  -- traverse_ print p1
+  let nalu1 = Map.singleton Z $ Set.singleton 0
+  let nalu2 = solve simple1 nalu1
+  let nalu3 = solve (_right simple1) nalu2
+  let nalu4 = solve (_left . _right $ simple1) nalu3
+  let nalu5 = solve (_parent . _left . _right $ simple1) nalu4
+  let nalu6 = solve (_left simple1) nalu5
+  let nalu7 = solve (_right . _left $ simple1) nalu6
+  let nalu8 = solve (_parent . _right . _left $ simple1) nalu7
+  let nalu9 = solve (_left . _parent . _right . _left $ simple1) nalu8
+  let nalu10 = solve (_right . _parent . _right . _left $ simple1) nalu9
+  let nalu11 = solve (_parent . _right . _parent . _right . _left $ simple1) nalu10
+  let nalu12 = solve (_left . _parent . _right . _parent . _right . _left $ simple1) nalu11
+  let nalu13 = solve (_left . _left $ simple1) nalu12
+
+  let problemChild = _parent . _left . _parent . _right . _parent . _right . _left $ simple1
+  let nalu14 = solve problemChild nalu13
+  print nalu1
+  print nalu2
+  print nalu3
+  print nalu4
+  print nalu5
+  print nalu6
+  print nalu7
+  print nalu8
+  print nalu9
+  print nalu10
+  print nalu11
+  print nalu12
+  print nalu13
+  -- print nalu14
+  putStrLn "============="
+  let blargh = solveBackwards simple1 nalu1
+  -- print . last $ blargh
+  traverse_ print $ take 12 $ blargh
+  print $ clamp problemChild
