@@ -21,6 +21,7 @@ import Data.Bifunctor.Swap (swap)
 import Data.Either (either)
 import Data.Foldable hiding (find, toList)
 import Data.Function (on)
+import Data.Int (Int32)
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -45,41 +46,41 @@ import Text.Show.Functions
 data Register = W | X | Y | Z deriving (Eq, Show, Ord)
 
 data ALU = ALU
-  { _w :: Int,
-    _x :: Int,
-    _y :: Int,
-    _z :: Int
+  { _w :: Int32,
+    _x :: Int32,
+    _y :: Int32,
+    _z :: Int32
   }
   deriving (Eq, Ord, Show)
 
 makeLenses ''ALU
 
-data Variable = Reg {_r :: Register} | Constant {_c :: Int} deriving (Eq, Show, Ord)
+data Variable = Reg {_r :: Register} | Constant {_c :: Int32} deriving (Eq, Show, Ord)
 
-getR :: Register -> ALU -> Int
+getR :: Register -> ALU -> Int32
 getR W = _w
 getR X = _x
 getR Y = _y
 getR Z = _z
 
-setR :: Register -> Int -> ALU -> ALU
+setR :: Register -> Int32 -> ALU -> ALU
 setR W = set w
 setR X = set x
 setR Y = set y
 setR Z = set z
 
-getV :: Variable -> ALU -> Int
+getV :: Variable -> ALU -> Int32
 getV (Reg r) = getR r
 getV (Constant c) = const c
 
 data Instruction
-  = Inp {_lineNumber :: Int, _a :: Register}
-  | Add {_lineNumber :: Int, _a :: Register, _b :: Variable}
-  | Mul {_lineNumber :: Int, _a :: Register, _b :: Variable}
-  | Div {_lineNumber :: Int, _a :: Register, _b :: Variable}
-  | Mod {_lineNumber :: Int, _a :: Register, _b :: Variable}
-  | Eql {_lineNumber :: Int, _a :: Register, _b :: Variable}
-  | Lod {_lineNumber :: Int, _a :: Register, _b :: Variable}
+  = Inp {_lineNumber :: Int32, _a :: Register}
+  | Add {_lineNumber :: Int32, _a :: Register, _b :: Variable}
+  | Mul {_lineNumber :: Int32, _a :: Register, _b :: Variable}
+  | Div {_lineNumber :: Int32, _a :: Register, _b :: Variable}
+  | Mod {_lineNumber :: Int32, _a :: Register, _b :: Variable}
+  | Eql {_lineNumber :: Int32, _a :: Register, _b :: Variable}
+  | Lod {_lineNumber :: Int32, _a :: Register, _b :: Variable}
   deriving (Eq, Show, Ord)
 
 makeLenses ''Instruction
@@ -93,8 +94,8 @@ parseProgram =
       parseRegister = parseW <|> parseX <|> parseY <|> parseZ
       parseVariable =
         Reg <$> parseRegister
-          <|> Constant <$> parseInt
-      lineNum = sourceLine <$> getPosition
+          <|> Constant . fromIntegral <$> parseInt
+      lineNum = fromIntegral . sourceLine <$> getPosition
       parseInp = Inp <$ try (string "inp ") <*> lineNum <*> parseRegister
       instruction constructor name =
         constructor <$ try (string (name ++ " "))
@@ -111,12 +112,12 @@ parseProgram =
    in sepEndBy1 parseInstruction endOfLine <* eof
 
 class (Monad m) => IntReader m where
-  readInt :: m Int
+  readInt :: m Int32
 
 instance IntReader IO where
   readInt = read <$> readLn
 
-instance IntReader (S.State [Int]) where
+instance IntReader (S.State [Int32]) where
   readInt = do
     xs <- S.get
     let (x : tail) = xs
@@ -147,15 +148,15 @@ runInstruction instr alu =
    in return $ setR a (opAB alu) alu
 
 data Inversion
-  = Inverted {_r1 :: Register, _values :: [Int]}
+  = Inverted {_r1 :: Register, _values :: [Int32]}
   | Codependency
       { _r1 :: Register,
         _r2 :: Register,
-        _r1ToR2 :: Int -> [Int],
-        _r2ToR1 :: Int -> [Int]
+        _r1ToR2 :: Int32 -> [Int32],
+        _r2ToR1 :: Int32 -> [Int32]
       }
 
--- invertInstruction :: Int -> Instruction ->
+-- invertInstruction :: Int32 -> Instruction ->
 invertInstruction instr z =
   let representable = [-14 ..]
       -- x + y = z ==> x = z - y || y = z - x
@@ -289,7 +290,7 @@ graphify instructions =
       graphState = go . reverse $ instructions
    in S.evalState graphState Map.empty
 
-emulateInstruction :: Instruction -> Int -> ProgramGraph
+emulateInstruction :: Instruction -> Int32 -> ProgramGraph
 emulateInstruction i arg =
   let c = _c . _b $ i -- the _b value must always be a constant in order to emulate
       a = _a i
@@ -358,37 +359,37 @@ linearise =
          in instr : all
    in reverse . go
 
-data Bound = Range Int Int | Elements (Set Int)
+data Bound = Range Int32 Int32 | Elements (Set Int32)
   deriving (Show, Eq, Ord)
 
-size :: Bound -> Int
+size :: Bound -> Int32
 size (Range a b) = b - a + 1
-size (Elements es) = Set.size es
+size (Elements es) = fromIntegral $ Set.size es
 
-contains :: Bound -> Int -> Bool
+contains :: Bound -> Int32 -> Bool
 contains (Range b c) a = b <= a && a <= c
 contains (Elements es) a = Set.member a es
 
-toList :: Bound -> [Int]
+toList :: Bound -> [Int32]
 toList (Range a b) = [a .. b]
 toList (Elements es) = Set.toList es
 
-toSet :: Bound -> Set Int
+toSet :: Bound -> Set Int32
 toSet (Elements es) = es
 toSet range = Set.fromList . toList $ range
 
 intersection :: Bound -> Bound -> Bound
 intersection a b = Elements $ Set.intersection (toSet a) (toSet b)
 
-lowerBound :: Bound -> Int
+lowerBound :: Bound -> Int32
 lowerBound (Range a _) = a
 lowerBound (Elements es) = fst . Maybe.fromJust . Set.minView $ es
 
-upperBound :: Bound -> Int
+upperBound :: Bound -> Int32
 upperBound (Range _ b) = b
 upperBound (Elements es) = fst . Maybe.fromJust . Set.maxView $ es
 
-rangeInBounds :: Bound -> [Int] -> [Int]
+rangeInBounds :: Bound -> [Int32] -> [Int32]
 rangeInBounds _ [] = []
 rangeInBounds bounds as@(a : _) =
   let lower = lowerBound bounds
@@ -441,7 +442,7 @@ clamp (Fork i l r) =
    in Range (minimum results) (maximum results)
 
 -- The 'N' stands for non-deterministic :-P
-type NALU = Map Register (Set Int)
+type NALU = Map Register (Set Int32)
 
 -- Attempting to workaround excessively large interval problems
 -- created by the standard "clamp".
@@ -536,13 +537,15 @@ solve (Fork instr l r) nalu =
       -- Eliminate any infinite inversion output lists
       solveYtoX graphX boundsX graphY boundsY cyToX cxToY =
         let ys = toList boundsY
-            xs = rangeInBounds boundsX $ (cyToX <*> ys) >>= id
+            xss = (rangeInBounds boundsX .) <$> cyToX <*> ys
+            xs = foldMap Set.fromList xss
             -- Some `y`s in the range of `ys` may produce
             -- an `x` value which is not in the range of `xs`.
             -- They may even produce no `x` at all.
             -- Filter these `ys` out.
-            ys' = rangeInBounds boundsY $ (cxToY <*> xs) >>= id
-         in (Set.fromList xs, Set.fromList ys')
+            yss' = (rangeInBounds boundsY .) <$> cxToY <*> (Set.toList xs)
+            ys' = foldMap Set.fromList yss'
+         in (xs, ys')
       -- find the smaller range to examine possibilities over:
       aSpaceSize = size as
       bSpaceSize = size bs
@@ -557,7 +560,23 @@ solve (Fork instr l r) nalu =
             swap $ solveYtoX r bs l as lToR rToL
    in Map.fromList [(a, as'), (b, bs')] <> nalu
 
-solveBackwards :: ProgramGraph -> NALU -> [(Int, NALU)]
+graphToList :: ProgramGraph -> [ProgramGraph]
+graphToList root =
+  let go Nothing = []
+      go (Just (g, queue)) =
+        let queue' = case g of
+              Terminal _ -> queue
+              Linear _ p ->
+                let lineNo = p ^. instr . lineNumber
+                 in Map.insert lineNo p queue
+              Fork _ l r ->
+                let lLine = l ^. instr . lineNumber
+                    rLine = r ^. instr . lineNumber
+                 in Map.insert lLine l . Map.insert rLine r $ queue
+         in g : (go $ Map.maxView queue')
+   in go (Just (root, Map.empty))
+
+solveBackwards :: ProgramGraph -> NALU -> [(Int32, NALU)]
 solveBackwards program nalu =
   let go nalu Nothing = []
       go nalu (Just (g, queue)) =
@@ -591,11 +610,11 @@ find p g =
           Linear _ parent -> find p parent
           Fork _ l r -> (find p l) `maybeOr` (find p r)
 
-runWithInputs :: [Int] -> [Instruction] -> ALU
+runWithInputs :: [Int32] -> [Instruction] -> ALU
 runWithInputs inputs instructions =
   S.evalState (runProgram instructions) inputs
 
-runWithInputs2 :: [Int] -> [Instruction] -> ALU
+runWithInputs2 :: [Int32] -> [Instruction] -> ALU
 runWithInputs2 inputs instructions =
   S.evalState (runProgram . linearise . simplify . graphify $ instructions) inputs
 
@@ -631,20 +650,20 @@ enterTheMonad = do
   print nalu1
   print nalu2
   print nalu3
-  print nalu4
-  print nalu5
-  print nalu6
-  print nalu7
-  print nalu8
-  print nalu9
-  print nalu10
-  print nalu11
-  print nalu12
-  print nalu13
-  print nalu14
+  -- print nalu4
+  -- print nalu5
+  -- print nalu6
+  -- print nalu7
+  -- print nalu8
+  -- print nalu9
+  -- print nalu10
+  -- print nalu11
+  -- print nalu12
+  -- print nalu13
+  -- print nalu14
   putStrLn "============="
   let blargh = solveBackwards simple1 nalu1
   -- let bloop = takeWhile ((>= 185) . fst) blargh
   -- print . last $ blargh
-  traverse_ print blargh
+  -- traverse_ print blargh
   print $ clamp problemChild
