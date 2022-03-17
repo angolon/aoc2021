@@ -74,10 +74,25 @@ unit_invertBDiv3Eq6 =
       as = _r2ToR1 inverted 3
    in as `shouldBe` [18, 19, 20]
 
+unit_invertBDiv3EqNeg6 =
+  let inverted = invertInstruction (Div 1 X (Reg Y)) (-6)
+      as = _r2ToR1 inverted 3
+   in as `shouldBe` [(-20), (-19), (-18)]
+
+unit_invertBDivNeg3Eq6 =
+  let inverted = invertInstruction (Div 1 X (Reg Y)) 6
+      as = _r2ToR1 inverted (-3)
+   in as `shouldBe` [(-20), (-19), (-18)]
+
+unit_invertBDivNeg3EqNeg6 =
+  let inverted = invertInstruction (Div 1 X (Reg Y)) (-6)
+      as = _r2ToR1 inverted (-3)
+   in as `shouldBe` [18, 19, 20]
+
 unit_invertBDiv8Eq0 =
   let inverted = invertInstruction (Div 1 X (Reg Y)) 0
       as = _r2ToR1 inverted 8
-   in as `shouldBe` [0 .. 7]
+   in as `shouldBe` [(-7) .. 7]
 
 unit_clampNegMul =
   let instrs =
@@ -89,6 +104,28 @@ unit_clampNegMul =
         ]
       g = simplify . graphify $ instrs
    in clamp g `shouldBe` (Range (-16) 16)
+
+unit_clampNegDivCrossesZero =
+  let instrs =
+        [ (Inp 1 W),
+          (Add 2 W (Constant (-5))),
+          (Inp 3 X),
+          (Add 4 X (Constant (-5))),
+          (Div 5 X (Reg W))
+        ]
+      g = simplify . graphify $ instrs
+   in clamp g `shouldBe` (Range (-4) 4)
+
+unit_clampNegDiv =
+  let instrs =
+        [ (Inp 1 X),
+          (Add 2 X (Constant (-21))),
+          (Inp 3 W),
+          (Add 4 W (Constant 3)),
+          (Div 5 X (Reg W))
+        ]
+      g = simplify . graphify $ instrs
+   in clamp g `shouldBe` (Range (-5) (-1))
 
 -- TODO: how handle negative mod operands
 --

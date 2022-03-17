@@ -19,7 +19,7 @@ import qualified Control.Monad.Loops as Loops
 import qualified Control.Monad.State.Lazy as S
 import Data.Bifunctor.Swap (swap)
 import Data.Either (either)
-import Data.Foldable hiding (toList)
+import Data.Foldable hiding (find, toList)
 import Data.Function (on)
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
@@ -123,10 +123,13 @@ instance IntReader (S.State [Int]) where
     S.put tail
     return x
 
+truncateDiv :: (Integral a) => a -> a -> a
+truncateDiv a b = truncate $ (toRational a) / (toRational b)
+
 instructionOp :: (Integral a) => Instruction -> a -> a -> a
 instructionOp (Add _ _ _) = (+)
 instructionOp (Mul _ _ _) = (*)
-instructionOp (Div _ _ _) = div
+instructionOp (Div _ _ _) = truncateDiv
 instructionOp (Mod _ _ _) = mod
 instructionOp (Eql _ _ _) = (\c d -> if c == d then 1 else 0)
 instructionOp (Lod _ _ _) = const id
@@ -174,9 +177,15 @@ invertInstruction instr z =
                 | otherwise -> [y]
       -- x / y = z ==> x = y * z
       invDivYToX y =
-        let lower = y * z
-            upper = lower + y - 1
-         in [lower .. upper]
+        let ay = abs y
+            az = abs z
+            lower = ay * az
+            upper = lower + ay - 1
+            sign = (signum y) * (signum z)
+         in if
+                | z == 0 -> [(- upper) .. upper]
+                | sign == 1 -> [lower .. upper]
+                | otherwise -> [(- upper) .. (- lower)]
       invModXToY x =
         let brutes = filter (\y -> (x `mod` y) == z) [(z + 1) .. (x - z)]
          in if z == x then [(z + 1) ..] else brutes
@@ -368,8 +377,25 @@ toSet :: Bound -> Set Int
 toSet (Elements es) = es
 toSet range = Set.fromList . toList $ range
 
+intersection :: Bound -> Bound -> Bound
+intersection a b = Elements $ Set.intersection (toSet a) (toSet b)
+
+lowerBound :: Bound -> Int
+lowerBound (Range a _) = a
+lowerBound (Elements es) = fst . Maybe.fromJust . Set.minView $ es
+
+upperBound :: Bound -> Int
+upperBound (Range _ b) = b
+upperBound (Elements es) = fst . Maybe.fromJust . Set.maxView $ es
+
 rangeInBounds :: Bound -> [Int] -> [Int]
-rangeInBounds bounds = takeWhile (contains bounds) . dropWhile (not . contains bounds)
+rangeInBounds _ [] = []
+rangeInBounds bounds as@(a : _) =
+  let lower = lowerBound bounds
+      upper = upperBound bounds
+   in if a > upper
+        then []
+        else takeWhile (contains bounds) . dropWhile (< lower) $ as
 
 clamp :: ProgramGraph -> Bound
 clamp (Terminal (Inp _ _)) = Range 1 9
@@ -386,6 +412,20 @@ clamp (Linear (Mod _ _ (Constant c)) p) =
   let (Range _ upperL) = clamp p
       upperest = if upperL >= c then c - 1 else upperL
    in Range 0 upperest
+clamp (Fork (Div _ _ _) l r) =
+  let rangeL@(Range lowerL upperL) = clamp l
+      rangeR@(Range lowerR upperR) = clamp r
+      -- We need to account for smaller magnitude numerators
+      -- and divisors.
+      numerators = lowerL : upperL : (filter (contains rangeL) [(-1), 0, 1])
+      divisors = lowerR : upperR : (filter (contains rangeR) [(-1), 1])
+      results = truncateDiv <$> numerators <*> divisors
+   in Range (minimum results) (maximum results)
+clamp (Linear (Div _ _ (Constant c)) p) =
+  let rangeP@(Range lowerP upperP) = clamp p
+      numerators = lowerP : upperP : (filter (contains rangeP) [(-1), 0, 1])
+      results = truncateDiv <$> numerators <*> pure c
+   in Range (minimum results) (maximum results)
 clamp (Linear i p) =
   let op = instructionOp i
       c = _c . _b $ i
@@ -403,10 +443,51 @@ clamp (Fork i l r) =
 -- The 'N' stands for non-deterministic :-P
 type NALU = Map Register (Set Int)
 
+-- Attempting to workaround excessively large interval problems
+-- created by the standard "clamp".
+-- We can only use the NALU to reason about the value of the
+-- B register (except for Inp instructions, where we can reason
+-- about A)
+powerClamp :: NALU -> ProgramGraph -> Bound
+powerClamp nalu term@(Terminal (Inp _ a)) =
+  let regular = clamp term
+      powerful = Elements <$> nalu !? a
+      intersected = intersection regular <$> powerful
+   in Maybe.fromMaybe regular intersected
+-- clamp (Linear (Eql _ _ _) _) = Range 0 1
+-- clamp (Fork (Eql _ _ _) _ _) = Range 0 1
+powerClamp nalu (Linear (Lod _ a (Reg b)) p) =
+  let bs = Elements <$> nalu !? b
+   in Maybe.fromMaybe (clamp p) bs
+powerClamp _ g = clamp g
+
+-- clamp (Fork (Mod _ _ _) l r) =
+--   let (Range _ upperL) = clamp l
+--       (Range _ upperR) = clamp r
+--       upperest = if upperL >= upperR then upperR - 1 else upperL
+--    in Range 0 upperest
+-- clamp (Linear (Mod _ _ (Constant c)) p) =
+--   let (Range _ upperL) = clamp p
+--       upperest = if upperL >= c then c - 1 else upperL
+--    in Range 0 upperest
+-- clamp (Linear i p) =
+--   let op = instructionOp i
+--       c = _c . _b $ i
+--       (Range lower upper) = clamp p
+--       a = lower `op` c
+--       b = upper `op` c
+--    in Range (min a b) (max a b)
+-- clamp (Fork i l r) =
+--   let (Range lowerL upperL) = clamp l
+--       (Range lowerR upperR) = clamp r
+--       op = instructionOp i
+--       results = op <$> [lowerL, upperL] <*> [lowerR, upperR]
+--    in Range (minimum results) (maximum results)
+
 possibleValues :: NALU -> ProgramGraph -> Bound
 possibleValues nalu g =
   let maybeOutputs = (fmap Elements) . (nalu !?) . _a . _instr $ g
-      clampOutputs = clamp g
+      clampOutputs = powerClamp nalu g
    in Maybe.fromMaybe clampOutputs maybeOutputs
 
 solve :: ProgramGraph -> NALU -> NALU
@@ -437,7 +518,7 @@ solve (Linear instr p) nalu =
   let a = _a instr
       (Constant b) = _b instr
       outputAs = Set.toList $ nalu ! a
-      aBounds = clamp p
+      aBounds = powerClamp nalu p
       as = rangeInBounds aBounds . _values . invertInstruction instr <$> outputAs
       as' = foldMap Set.fromList as
    in Map.insert a as' nalu
@@ -494,6 +575,22 @@ solveBackwards program nalu =
          in (ln, nalu') : (go nalu' $ Map.maxView queue')
    in go nalu $ Just (program, Map.empty)
 
+maybeOr :: Maybe a -> Maybe a -> Maybe a
+maybeOr a@(Just _) _ = a
+maybeOr _ a = a
+
+find :: (Instruction -> Bool) -> ProgramGraph -> Maybe ProgramGraph
+find p g@(Terminal inst) = if p inst then Just g else Nothing
+find p g@(Linear inst parent) = if p inst then Just g else find p parent
+find p g =
+  let inst = _instr g
+   in if p inst
+        then Just g
+        else case g of
+          Terminal _ -> Nothing
+          Linear _ parent -> find p parent
+          Fork _ l r -> (find p l) `maybeOr` (find p r)
+
 runWithInputs :: [Int] -> [Instruction] -> ALU
 runWithInputs inputs instructions =
   S.evalState (runProgram instructions) inputs
@@ -544,9 +641,10 @@ enterTheMonad = do
   print nalu11
   print nalu12
   print nalu13
-  -- print nalu14
+  print nalu14
   putStrLn "============="
   let blargh = solveBackwards simple1 nalu1
+  -- let bloop = takeWhile ((>= 185) . fst) blargh
   -- print . last $ blargh
-  traverse_ print $ take 12 $ blargh
+  traverse_ print blargh
   print $ clamp problemChild
