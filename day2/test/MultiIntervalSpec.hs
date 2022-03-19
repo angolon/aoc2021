@@ -130,4 +130,21 @@ unit_diff_restOfTheFuckingOwl =
       cs = (3 ... 7) `union` singleton 14 `union` singleton 19 `union` singleton 25 `union` (30 ... 31)
    in as `diff` bs `shouldBe` cs
 
+prop_diffSelfCancels :: MultiInterval Int -> Property
+prop_diffSelfCancels as =
+  property $ as `diff` as `shouldBe` empty
+
+prop_diffNoIntersection :: MultiInterval Int -> MultiInterval Int -> Property
+prop_diffNoIntersection as bs =
+  let as' = as `diff` bs
+   in property $ as' `intersection` bs `shouldBe` empty
+
+prop_unionOfDiffsIsDiffOfIntersection :: MultiInterval Int -> MultiInterval Int -> Property
+prop_unionOfDiffsIsDiffOfIntersection as bs =
+  let diffA = as `diff` bs
+      diffB = bs `diff` as
+      abs1 = diffA `union` diffB
+      abs2 = (as `union` bs) `diff` (as `intersection` bs)
+   in property $ abs1 `shouldBe` abs2
+
 -- TODO: decide how multiplication should behave, and then test it.

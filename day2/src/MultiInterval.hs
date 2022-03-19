@@ -111,7 +111,7 @@ diff (MI as) (MI bs)
            in if
                   | a <! b -> advanceA $ mergeLast accum a
                   | b <! a -> advanceB accum
-                  | a < b ->
+                  | minA < minB ->
                     if
                         | maxA <= maxB -> go (Set.minView as') (Just (b, bs')) accum'
                         | maxA > maxB -> go (Just (ba, as')) (Set.minView bs') accum'
