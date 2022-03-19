@@ -130,8 +130,8 @@ lowerBound (MI is) = getMin . Maybe.fromJust . foldMap (Just . Min . Interval.in
 upperBound :: Ord a => MultiInterval a -> a
 upperBound (MI is) = getMax . Maybe.fromJust . foldMap (Just . Max . Interval.sup) $ is
 
-contains :: Ord a => a -> MultiInterval a -> Bool
-contains a (MI as) =
+contains :: Ord a => MultiInterval a -> a -> Bool
+contains (MI as) a =
   let ai = Interval.singleton a
       as' = Set.dropWhileAntitone (<! ai) as
       head = Set.lookupMin as'
@@ -153,15 +153,29 @@ instance Integral a => Semigroup (MultiInterval a) where
 instance Integral a => Monoid (MultiInterval a) where
   mempty = empty
 
-instance Integral a => Num (MultiInterval a) where
+instance (Ord a, Integral a) => Num (MultiInterval a) where
   (MI as) + (MI bs) = Foldable.fold . fmap fromInterval $ (+) <$> Set.toList as <*> Set.toList bs
 
   fromInteger = singleton . fromInteger
 
   -- I choose not to.
   abs = undefined
-  negate = undefined
+
+  negate = Foldable.fold . fmap fromInterval . fmap negate . Set.toList . _intervals
 
   signum (MI as) = Foldable.fold . fmap (fromInterval . signum) . Set.toList $ as
 
-  (*) = undefined
+  a@(MI as) * b@(MI bs)
+    | Set.null as = empty
+    | Set.null bs = empty
+    | otherwise =
+      let specials = (-1) ... 1
+          a' = Set.toList . _intervals $ a `diff` specials
+          b' = Set.toList . _intervals $ b `diff` specials
+          z = if a `contains` 0 || b `contains` 0 then 0 ... 0 else empty
+          posA = if a `contains` 1 then b else empty
+          posB = if b `contains` 1 then a else empty
+          negA = if a `contains` (-1) then negate b else empty
+          negB = if b `contains` (-1) then negate a else empty
+          normals = Foldable.fold . fmap fromInterval $ (*) <$> a' <*> b'
+       in Foldable.fold [z, posA, posB, negA, negB, normals]

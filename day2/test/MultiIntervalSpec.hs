@@ -54,18 +54,18 @@ prop_unionAssociative as bs cs =
    in property $ leftAssoc `shouldBe` rightAssoc
 
 unit_containsSingletonDoesContain =
-  (contains 7 $ singleton 7) `shouldBe` True
+  (singleton 7) `shouldSatisfy` (`contains` 7)
 
 unit_containsSingletonDoesn'tContainLT =
-  (contains 5 $ singleton 9) `shouldBe` False
+  (singleton 9 `contains` 5) `shouldBe` False
 
 unit_containsDisjointDoesContainL =
   let as = (1 ... 3) `union` (8 ... 10)
-   in as `shouldSatisfy` contains 3
+   in as `shouldSatisfy` (`contains` 3)
 
 unit_containsDisjointDoesContainR =
   let as = (1 ... 3) `union` (8 ... 10)
-   in as `shouldSatisfy` contains 9
+   in as `shouldSatisfy` (`contains` 9)
 
 unit_intersectionEmptyXsIsEmpty =
   (empty `intersection` (8 ... 15)) `shouldBe` empty
