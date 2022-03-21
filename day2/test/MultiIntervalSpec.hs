@@ -148,3 +148,8 @@ prop_unionOfDiffsIsDiffOfIntersection as bs =
    in property $ abs1 `shouldBe` abs2
 
 -- TODO: decide how multiplication should behave, and then test it.
+--
+
+unit_iquotNegCrossesZero =
+  let as = (-4) ... 4
+   in as `iquot` as `shouldBe` as

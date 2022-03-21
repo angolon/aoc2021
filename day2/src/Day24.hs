@@ -12,7 +12,7 @@ module Day24 where
 
 import Control.Arrow
 import Control.Exception (assert)
-import Control.Lens hiding (contains)
+import Control.Lens hiding (contains, (...))
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
 import qualified Control.Monad.Loops as Loops
@@ -21,7 +21,7 @@ import Data.Bifunctor.Swap (swap)
 import Data.Either (either)
 import Data.Foldable hiding (find, toList)
 import Data.Function (on)
-import Data.Int (Int32)
+import Data.Int (Int32 (..))
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -39,48 +39,52 @@ import Data.Set (Set (..), union)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import Lib (MyParser, parseInt, parseStdin)
+import MultiInterval
 import Text.Parsec
 import Text.Parsec.Char
 import Text.Show.Functions
 
+-- Aliasing the integer type to use, for ease of refactoring yet again:
+type IntR = Int
+
 data Register = W | X | Y | Z deriving (Eq, Show, Ord)
 
 data ALU = ALU
-  { _w :: Int32,
-    _x :: Int32,
-    _y :: Int32,
-    _z :: Int32
+  { _w :: IntR,
+    _x :: IntR,
+    _y :: IntR,
+    _z :: IntR
   }
   deriving (Eq, Ord, Show)
 
 makeLenses ''ALU
 
-data Variable = Reg {_r :: Register} | Constant {_c :: Int32} deriving (Eq, Show, Ord)
+data Variable = Reg {_r :: Register} | Constant {_c :: IntR} deriving (Eq, Show, Ord)
 
-getR :: Register -> ALU -> Int32
+getR :: Register -> ALU -> IntR
 getR W = _w
 getR X = _x
 getR Y = _y
 getR Z = _z
 
-setR :: Register -> Int32 -> ALU -> ALU
+setR :: Register -> IntR -> ALU -> ALU
 setR W = set w
 setR X = set x
 setR Y = set y
 setR Z = set z
 
-getV :: Variable -> ALU -> Int32
+getV :: Variable -> ALU -> IntR
 getV (Reg r) = getR r
 getV (Constant c) = const c
 
 data Instruction
-  = Inp {_lineNumber :: Int32, _a :: Register}
-  | Add {_lineNumber :: Int32, _a :: Register, _b :: Variable}
-  | Mul {_lineNumber :: Int32, _a :: Register, _b :: Variable}
-  | Div {_lineNumber :: Int32, _a :: Register, _b :: Variable}
-  | Mod {_lineNumber :: Int32, _a :: Register, _b :: Variable}
-  | Eql {_lineNumber :: Int32, _a :: Register, _b :: Variable}
-  | Lod {_lineNumber :: Int32, _a :: Register, _b :: Variable}
+  = Inp {_lineNumber :: IntR, _a :: Register}
+  | Add {_lineNumber :: IntR, _a :: Register, _b :: Variable}
+  | Mul {_lineNumber :: IntR, _a :: Register, _b :: Variable}
+  | Div {_lineNumber :: IntR, _a :: Register, _b :: Variable}
+  | Mod {_lineNumber :: IntR, _a :: Register, _b :: Variable}
+  | Eql {_lineNumber :: IntR, _a :: Register, _b :: Variable}
+  | Lod {_lineNumber :: IntR, _a :: Register, _b :: Variable}
   deriving (Eq, Show, Ord)
 
 makeLenses ''Instruction
@@ -112,12 +116,12 @@ parseProgram =
    in sepEndBy1 parseInstruction endOfLine <* eof
 
 class (Monad m) => IntReader m where
-  readInt :: m Int32
+  readInt :: m IntR
 
 instance IntReader IO where
   readInt = read <$> readLn
 
-instance IntReader (S.State [Int32]) where
+instance IntReader (S.State [IntR]) where
   readInt = do
     xs <- S.get
     let (x : tail) = xs
@@ -148,34 +152,36 @@ runInstruction instr alu =
    in return $ setR a (opAB alu) alu
 
 data Inversion
-  = Inverted {_r1 :: Register, _values :: [Int32]}
+  = Inverted {_r1 :: Register, _values :: MultiInterval IntR}
   | Codependency
       { _r1 :: Register,
         _r2 :: Register,
-        _r1ToR2 :: Int32 -> [Int32],
-        _r2ToR1 :: Int32 -> [Int32]
+        _r1ToR2 :: IntR -> MultiInterval IntR,
+        _r2ToR1 :: IntR -> MultiInterval IntR
       }
 
--- invertInstruction :: Int32 -> Instruction ->
-invertInstruction instr z =
-  let representable = [-14 ..]
-      -- x + y = z ==> x = z - y || y = z - x
-      invAddXToY = pure . (z -)
-      invAddYToX = invAddXToY
+invertInstruction :: Instruction -> MultiInterval IntR -> MultiInterval IntR -> IntR -> Inversion
+invertInstruction instr xBounds yBounds z =
+  let -- x + y = z ==> x = z - y || y = z - x
+      invAdd = singleton . (z -)
+      invAddXToY = (`intersection` yBounds) . invAdd
+      invAddYToX = (`intersection` xBounds) . invAdd
       -- x * y = z ==> x = z / y || y = z / x
-      invMulXToY 0 = representable
-      invMulXToY x =
+      invMul x =
         let y = z `div` x
             check = x * y == z
-         in if check then [y] else []
-      invMulYToX = invMulXToY
+         in if check then singleton y else empty
+      invMulXToY 0 = yBounds
+      invMulXToY x = (`intersection` yBounds) $ invMul x
+      invMulYToX 0 = xBounds
+      invMulYToX y = (`intersection` xBounds) $ invMul y
       -- x / y = z ==> y = x / z
       invDivXToY x =
         let y = x `div` z
          in if
                 | y < 0 -> error "danger will robinson"
-                | y == 0 -> []
-                | otherwise -> [y]
+                | y == 0 -> empty
+                | otherwise -> singleton y `intersection` yBounds
       -- x / y = z ==> x = y * z
       invDivYToX y =
         let ay = abs y
@@ -183,23 +189,29 @@ invertInstruction instr z =
             lower = ay * az
             upper = lower + ay - 1
             sign = (signum y) * (signum z)
-         in if
-                | z == 0 -> [(- upper) .. upper]
-                | sign == 1 -> [lower .. upper]
-                | otherwise -> [(- upper) .. (- lower)]
-      invModXToY x =
-        let brutes = filter (\y -> (x `mod` y) == z) [(z + 1) .. (x - z)]
-         in if z == x then [(z + 1) ..] else brutes
-      invModYToX y =
-        if z >= y then [] else [z, (z + y) ..]
-      invEqlXToY x =
-        if z == 1
-          then [x]
-          else -- else error "I don't want to produce this kind of infinity"
-            filter (/= x) representable
-      invEqlYToX = invEqlXToY
-      invLodXToY x = [x]
-      invLodYToX y = representable
+            xs =
+              if
+                  | z == 0 -> (- upper) ... upper
+                  | sign == 1 -> lower ... upper
+                  | otherwise -> (- upper) ... (- lower)
+         in xs `intersection` xBounds
+      xMax = upperBound xBounds
+      yMax = upperBound yBounds
+      invModXToY x
+        | z > x = empty
+        | x == z && yMax > z = (yBounds `intersection`) $ (z + 1) ... yMax
+        | x == z = empty
+        | otherwise = (yBounds `intersection`) . foldMap singleton $ filter (\y -> (x `mod` y) == z) [(z + 1) .. (x - z)]
+      invModYToX y
+        | z < y = (xBounds `intersection`) . foldMap singleton $ takeWhile (<= xMax) [z, (z + y) ..]
+        | z >= y = empty
+      invEql bounds operand
+        | operand == z = singleton operand `intersection` bounds
+        | operand /= z = bounds `diff` singleton operand
+      invEqlXToY = invEql yBounds
+      invEqlYToX = invEql xBounds
+      invLodXToY x = singleton x `intersection` yBounds
+      invLodYToX y = xBounds -- x could have been anything before it was smashed with y
       (xToY, yToX) = case instr of
         Add _ _ _ -> (invAddXToY, invAddYToX)
         Mul _ _ _ -> (invMulXToY, invMulYToX)
@@ -290,7 +302,7 @@ graphify instructions =
       graphState = go . reverse $ instructions
    in S.evalState graphState Map.empty
 
-emulateInstruction :: Instruction -> Int32 -> ProgramGraph
+emulateInstruction :: Instruction -> IntR -> ProgramGraph
 emulateInstruction i arg =
   let c = _c . _b $ i -- the _b value must always be a constant in order to emulate
       a = _a i
@@ -359,107 +371,58 @@ linearise =
          in instr : all
    in reverse . go
 
-data Bound = Range Int32 Int32 | Elements (Set Int32)
-  deriving (Show, Eq, Ord)
-
-size :: Bound -> Int32
-size (Range a b) = b - a + 1
-size (Elements es) = fromIntegral $ Set.size es
-
-contains :: Bound -> Int32 -> Bool
-contains (Range b c) a = b <= a && a <= c
-contains (Elements es) a = Set.member a es
-
-toList :: Bound -> [Int32]
-toList (Range a b) = [a .. b]
-toList (Elements es) = Set.toList es
-
-toSet :: Bound -> Set Int32
-toSet (Elements es) = es
-toSet range = Set.fromList . toList $ range
-
-intersection :: Bound -> Bound -> Bound
-intersection a b = Elements $ Set.intersection (toSet a) (toSet b)
-
-lowerBound :: Bound -> Int32
-lowerBound (Range a _) = a
-lowerBound (Elements es) = fst . Maybe.fromJust . Set.minView $ es
-
-upperBound :: Bound -> Int32
-upperBound (Range _ b) = b
-upperBound (Elements es) = fst . Maybe.fromJust . Set.maxView $ es
-
-rangeInBounds :: Bound -> [Int32] -> [Int32]
+rangeInBounds :: MultiInterval IntR -> [IntR] -> [IntR]
 rangeInBounds _ [] = []
 rangeInBounds bounds as@(a : _) =
   let lower = lowerBound bounds
       upper = upperBound bounds
    in if a > upper
         then []
-        else takeWhile (contains bounds) . dropWhile (< lower) $ as
+        else takeWhile (bounds `contains`) . dropWhile (< lower) $ as
 
-clamp :: ProgramGraph -> Bound
-clamp (Terminal (Inp _ _)) = Range 1 9
-clamp (Linear (Eql _ _ _) _) = Range 0 1
-clamp (Fork (Eql _ _ _) _ _) = Range 0 1
-clamp (Terminal (Lod _ _ (Constant c))) = Range c c
+clamp :: ProgramGraph -> MultiInterval IntR
+clamp (Terminal (Inp _ _)) = 1 ... 9
+clamp (Linear (Eql _ _ _) _) = 0 ... 1
+clamp (Fork (Eql _ _ _) _ _) = 0 ... 1
+clamp (Terminal (Lod _ _ (Constant c))) = singleton c
 clamp (Linear (Lod _ _ _) p) = clamp p
-clamp (Fork (Mod _ _ _) l r) =
-  let (Range _ upperL) = clamp l
-      (Range _ upperR) = clamp r
-      upperest = if upperL >= upperR then upperR - 1 else upperL
-   in Range 0 upperest
-clamp (Linear (Mod _ _ (Constant c)) p) =
-  let (Range _ upperL) = clamp p
-      upperest = if upperL >= c then c - 1 else upperL
-   in Range 0 upperest
-clamp (Fork (Div _ _ _) l r) =
-  let rangeL@(Range lowerL upperL) = clamp l
-      rangeR@(Range lowerR upperR) = clamp r
-      -- We need to account for smaller magnitude numerators
-      -- and divisors.
-      numerators = lowerL : upperL : (filter (contains rangeL) [(-1), 0, 1])
-      divisors = lowerR : upperR : (filter (contains rangeR) [(-1), 1])
-      results = truncateDiv <$> numerators <*> divisors
-   in Range (minimum results) (maximum results)
-clamp (Linear (Div _ _ (Constant c)) p) =
-  let rangeP@(Range lowerP upperP) = clamp p
-      numerators = lowerP : upperP : (filter (contains rangeP) [(-1), 0, 1])
-      results = truncateDiv <$> numerators <*> pure c
-   in Range (minimum results) (maximum results)
-clamp (Linear i p) =
-  let op = instructionOp i
-      c = _c . _b $ i
-      (Range lower upper) = clamp p
-      a = lower `op` c
-      b = upper `op` c
-   in Range (min a b) (max a b)
-clamp (Fork i l r) =
-  let (Range lowerL upperL) = clamp l
-      (Range lowerR upperR) = clamp r
-      op = instructionOp i
-      results = op <$> [lowerL, upperL] <*> [lowerR, upperR]
-   in Range (minimum results) (maximum results)
+clamp (Fork (Mod _ _ _) l r) = clamp l `imod` clamp r
+clamp (Linear (Mod _ _ (Constant c)) p) = clamp p `imod` singleton c
+clamp (Fork (Div _ _ _) l r) = clamp l `iquot` clamp r
+clamp (Linear (Div _ _ (Constant c)) p) = clamp p `iquot` singleton c
+clamp (Fork (Mul _ _ _) l r) = clamp l * clamp r
+clamp (Linear (Mul _ _ (Constant c)) p) = clamp p * singleton c
+clamp (Fork (Add _ _ _) l r) = clamp l + clamp r
+clamp (Linear (Add _ _ (Constant c)) p) = clamp p + singleton c
 
 -- The 'N' stands for non-deterministic :-P
-type NALU = Map Register (Set Int32)
+type NALU = Map Register (MultiInterval IntR)
 
 -- Attempting to workaround excessively large interval problems
 -- created by the standard "clamp".
 -- We can only use the NALU to reason about the value of the
 -- B register (except for Inp instructions, where we can reason
 -- about A)
-powerClamp :: NALU -> ProgramGraph -> Bound
+powerClamp :: NALU -> ProgramGraph -> MultiInterval IntR
 powerClamp nalu term@(Terminal (Inp _ a)) =
   let regular = clamp term
-      powerful = Elements <$> nalu !? a
+      powerful = nalu !? a
       intersected = intersection regular <$> powerful
    in Maybe.fromMaybe regular intersected
 -- clamp (Linear (Eql _ _ _) _) = Range 0 1
 -- clamp (Fork (Eql _ _ _) _ _) = Range 0 1
 powerClamp nalu (Linear (Lod _ a (Reg b)) p) =
-  let bs = Elements <$> nalu !? b
+  let bs = nalu !? b
    in Maybe.fromMaybe (clamp p) bs
+-- powerClamp nalu (Linear (Eql _ a (Constant c)) p) =
+--   let maybeAs = Elements <$> nalu !? a
+--       as = Maybe.fromMaybe (clamp p) maybeAs
+--       inclusive = contains as c
+--       exclusive = upperBound as == c && lowerBound as == c
+--    in if
+--           | exclusive -> Range 1 1
+--           | inclusive -> Range 0 1
+--           | otherwise -> Range 0 0
 powerClamp _ g = clamp g
 
 -- clamp (Fork (Mod _ _ _) l r) =
@@ -485,9 +448,9 @@ powerClamp _ g = clamp g
 --       results = op <$> [lowerL, upperL] <*> [lowerR, upperR]
 --    in Range (minimum results) (maximum results)
 
-possibleValues :: NALU -> ProgramGraph -> Bound
+possibleValues :: NALU -> ProgramGraph -> MultiInterval IntR
 possibleValues nalu g =
-  let maybeOutputs = (fmap Elements) . (nalu !?) . _a . _instr $ g
+  let maybeOutputs = (nalu !?) . _a . _instr $ g
       clampOutputs = powerClamp nalu g
    in Maybe.fromMaybe clampOutputs maybeOutputs
 
@@ -500,7 +463,7 @@ solve (Terminal (Inp _ a)) nalu = Map.delete a nalu
 solve (Terminal (Lod _ a (Constant c))) nalu =
   let as = nalu ! a
       nalu' = Map.delete a nalu
-   in assert (Set.member c as) nalu'
+   in assert (as `contains` c) nalu'
 solve (Linear (Lod _ a (Reg b)) p) nalu =
   -- Weird case that is constructed through simplification of the program graph.
   -- This simply copies the value of register B into register A
@@ -511,17 +474,18 @@ solve (Linear (Lod _ a (Reg b)) p) nalu =
   -- for register A, as we can't infer anything about its previous value from
   -- a load instruction.
   let as = nalu ! a
-      bs = toSet $ possibleValues nalu p
-      bs' = Set.intersection as bs
+      bs = possibleValues nalu p
+      bs' = MultiInterval.intersection as bs
       nalu' = Map.delete a . Map.insert b bs' $ nalu
-   in assert (not . Set.null $ bs') nalu'
+   in assert (not . MultiInterval.null $ bs') nalu'
 solve (Linear instr p) nalu =
   let a = _a instr
       (Constant b) = _b instr
-      outputAs = Set.toList $ nalu ! a
+      outputAs = toList $ nalu ! a
       aBounds = powerClamp nalu p
-      as = rangeInBounds aBounds . _values . invertInstruction instr <$> outputAs
-      as' = foldMap Set.fromList as
+
+      as = (`intersection` aBounds) . _values . invertInstruction instr aBounds (singleton b) <$> outputAs
+      as' = fold as
    in Map.insert a as' nalu
 solve (Fork instr l r) nalu =
   let a = _a instr
@@ -533,31 +497,26 @@ solve (Fork instr l r) nalu =
       -- The possible B register values may already be known in the NALU.
       -- (they won't change as a result of this instruction)
       bs = possibleValues nalu r
-      outputAs = Set.toList $ nalu ! a
+      outputAs = toList $ nalu ! a
       -- Eliminate any infinite inversion output lists
-      solveYtoX graphX boundsX graphY boundsY cyToX cxToY =
-        let ys = toList boundsY
-            xss = (rangeInBounds boundsX .) <$> cyToX <*> ys
-            xs = foldMap Set.fromList xss
-            -- Some `y`s in the range of `ys` may produce
-            -- an `x` value which is not in the range of `xs`.
-            -- They may even produce no `x` at all.
-            -- Filter these `ys` out.
-            yss' = (rangeInBounds boundsY .) <$> cxToY <*> (Set.toList xs)
-            ys' = foldMap Set.fromList yss'
-         in (xs, ys')
+      solveYtoX boundsY cyToX =
+        let ys = MultiInterval.toList boundsY
+            xss = cyToX <*> ys
+            xs = fold xss
+         in (xs, boundsY)
       -- find the smaller range to examine possibilities over:
       aSpaceSize = size as
       bSpaceSize = size bs
-      lToR = _r1ToR2 . invertInstruction instr <$> outputAs
-      rToL = _r2ToR1 . invertInstruction instr <$> outputAs
+      inv = invertInstruction instr as bs
+      lToR = _r1ToR2 . inv <$> outputAs
+      rToL = _r2ToR1 . inv <$> outputAs
       (as', bs') =
         if aSpaceSize >= bSpaceSize
-          then solveYtoX l as r bs rToL lToR
+          then solveYtoX bs rToL
           else -- Inverting in the other direction, so we need to swap
           -- the answers for the left register back into the left
           -- element of the tuple.
-            swap $ solveYtoX r bs l as lToR rToL
+            swap $ solveYtoX as lToR
    in Map.fromList [(a, as'), (b, bs')] <> nalu
 
 graphToList :: ProgramGraph -> [ProgramGraph]
@@ -576,7 +535,7 @@ graphToList root =
          in g : (go $ Map.maxView queue')
    in go (Just (root, Map.empty))
 
-solveBackwards :: ProgramGraph -> NALU -> [(Int32, NALU)]
+solveBackwards :: ProgramGraph -> NALU -> [(IntR, NALU)]
 solveBackwards program nalu =
   let go nalu Nothing = []
       go nalu (Just (g, queue)) =
@@ -610,11 +569,11 @@ find p g =
           Linear _ parent -> find p parent
           Fork _ l r -> (find p l) `maybeOr` (find p r)
 
-runWithInputs :: [Int32] -> [Instruction] -> ALU
+runWithInputs :: [IntR] -> [Instruction] -> ALU
 runWithInputs inputs instructions =
   S.evalState (runProgram instructions) inputs
 
-runWithInputs2 :: [Int32] -> [Instruction] -> ALU
+runWithInputs2 :: [IntR] -> [Instruction] -> ALU
 runWithInputs2 inputs instructions =
   S.evalState (runProgram . linearise . simplify . graphify $ instructions) inputs
 
@@ -630,26 +589,27 @@ enterTheMonad = do
   (Right parsed) <- parseStdin parseProgram
   let simple1 = simplify . graphify $ parsed
   let p1 = linearise simple1
-  -- traverse_ print p1
-  let nalu1 = Map.singleton Z $ Set.singleton 0
+  traverse_ print p1
+  print . clamp $ simple1
+  let nalu1 = Map.singleton Z $ singleton 0
   let nalu2 = solve simple1 nalu1
-  let nalu3 = solve (_right simple1) nalu2
-  let nalu4 = solve (_left . _right $ simple1) nalu3
-  let nalu5 = solve (_parent . _left . _right $ simple1) nalu4
-  let nalu6 = solve (_left simple1) nalu5
-  let nalu7 = solve (_right . _left $ simple1) nalu6
-  let nalu8 = solve (_parent . _right . _left $ simple1) nalu7
-  let nalu9 = solve (_left . _parent . _right . _left $ simple1) nalu8
-  let nalu10 = solve (_right . _parent . _right . _left $ simple1) nalu9
-  let nalu11 = solve (_parent . _right . _parent . _right . _left $ simple1) nalu10
-  let nalu12 = solve (_left . _parent . _right . _parent . _right . _left $ simple1) nalu11
-  let nalu13 = solve (_left . _left $ simple1) nalu12
+  -- let nalu3 = solve (_right simple1) nalu2
+  -- let nalu4 = solve (_left . _right $ simple1) nalu3
+  -- let nalu5 = solve (_parent . _left . _right $ simple1) nalu4
+  -- let nalu6 = solve (_left simple1) nalu5
+  -- let nalu7 = solve (_right . _left $ simple1) nalu6
+  -- let nalu8 = solve (_parent . _right . _left $ simple1) nalu7
+  -- let nalu9 = solve (_left . _parent . _right . _left $ simple1) nalu8
+  -- let nalu10 = solve (_right . _parent . _right . _left $ simple1) nalu9
+  -- let nalu11 = solve (_parent . _right . _parent . _right . _left $ simple1) nalu10
+  -- let nalu12 = solve (_left . _parent . _right . _parent . _right . _left $ simple1) nalu11
+  -- let nalu13 = solve (_left . _left $ simple1) nalu12
 
-  let problemChild = _parent . _left . _parent . _right . _parent . _right . _left $ simple1
-  let nalu14 = solve problemChild nalu13
+  -- let problemChild = _parent . _left . _parent . _right . _parent . _right . _left $ simple1
+  -- let nalu14 = solve problemChild nalu13
   print nalu1
   print nalu2
-  print nalu3
+  -- print nalu3
   -- print nalu4
   -- print nalu5
   -- print nalu6
@@ -663,7 +623,8 @@ enterTheMonad = do
   -- print nalu14
   putStrLn "============="
   let blargh = solveBackwards simple1 nalu1
-  -- let bloop = takeWhile ((>= 185) . fst) blargh
-  -- print . last $ blargh
-  -- traverse_ print blargh
-  print $ clamp problemChild
+  let bloop = takeWhile ((>= 235) . fst) blargh
+  -- print . head . tail . reverse $ blargh
+  traverse_ print blargh
+
+-- print $ clamp problemChild

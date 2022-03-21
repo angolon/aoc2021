@@ -138,6 +138,29 @@ contains (MI as) a =
       contained = Interval.member a <$> head
    in Maybe.fromMaybe False contained
 
+iquot :: (Integral a) => MultiInterval a -> MultiInterval a -> MultiInterval a
+iquot a@(MI as) b@(MI bs)
+  | Set.null as = empty
+  | Set.null bs = empty
+  | otherwise =
+    let b' = b `diff` singleton 0 -- Avoid division by zero
+        intervals = (Interval.iquot) <$> Set.toList as <*> (Set.toList . _intervals) b'
+     in Foldable.fold . fmap fromInterval $ intervals
+
+imod :: (Integral a) => MultiInterval a -> MultiInterval a -> MultiInterval a
+imod a@(MI as) b@(MI bs)
+  | Set.null as = empty
+  | Set.null bs = empty
+  | otherwise =
+    let b' = b `diff` singleton 0 -- Avoid division by zero
+        intervals = (Interval.imod) <$> Set.toList as <*> (Set.toList . _intervals) b'
+     in Foldable.fold . fmap fromInterval $ intervals
+
+toList :: (Integral a) => MultiInterval a -> [a]
+toList (MI as) =
+  let intervalToList i = [(Interval.inf i) .. (Interval.sup i)]
+   in foldMap intervalToList as
+
 -- toList :: Bound -> [Int32]
 -- toList (Range a b) = [a .. b]
 -- toList (Elements es) = Set.toList es
