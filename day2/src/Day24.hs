@@ -19,7 +19,7 @@ import qualified Control.Monad.Loops as Loops
 import qualified Control.Monad.State.Lazy as S
 import Data.Bifunctor.Swap (swap)
 import Data.Either (either)
-import Data.Foldable hiding (find, toList)
+import Data.Foldable hiding (find, null, toList)
 import Data.Function (on)
 import Data.Int (Int32 (..))
 import qualified Data.List as List
@@ -43,6 +43,7 @@ import MultiInterval
 import Text.Parsec
 import Text.Parsec.Char
 import Text.Show.Functions
+import Prelude hiding (null)
 
 -- Aliasing the integer type to use, for ease of refactoring yet again:
 type IntR = Int
@@ -88,6 +89,10 @@ data Instruction
   deriving (Eq, Show, Ord)
 
 makeLenses ''Instruction
+
+isInp :: Instruction -> Bool
+isInp (Inp _ _) = True
+isInp _ = False
 
 parseProgram :: MyParser [Instruction]
 parseProgram =
@@ -276,6 +281,8 @@ graphify instructions =
       go (i@(Mul ln a (Constant 0)) : _) =
         -- sets register to zero, has no dependencies
         memoize i $ return $ Terminal (Lod ln a (Constant 0))
+      go (i@(Lod _ _ (Constant _)) : _) =
+        memoize i $ return $ Terminal i
       go (i : is) =
         let a = _a i
             b = _b i
@@ -287,12 +294,16 @@ graphify instructions =
                     -- Hack: negative line numbers to shoe-horn in explicit load zero instructions
                     Nothing ->
                       return $ Terminal (Lod (-1) a (Constant 0))
-         in memoize i $ case b of
-              Constant _ ->
+         in memoize i $ case (i, b) of
+              (Lod _ _ (Reg b), _) ->
+                do
+                  parent <- definitelyGo b
+                  return $ Linear i parent
+              (_, Constant _) ->
                 do
                   parent <- definitelyGo a
                   return $ Linear i parent
-              Reg r ->
+              (_, Reg r) ->
                 do
                   lhs <- definitelyGo a
                   rhs <- definitelyGo r
@@ -322,8 +333,9 @@ simplify gg =
       simplifyM (Linear (Add _ _ (Constant 0)) p) = simplifyM p
       simplifyM linear@(Linear i p) = memoize linear $ do
         simpleP <- simplifyM p
-        case simpleP of
-          Terminal (Lod _ _ (Constant c)) -> return $ emulateInstruction i c
+        case (i, simpleP) of
+          (Lod _ _ _, Terminal (Lod _ _ (Constant c))) -> return . Terminal $ i & b .~ (Constant c)
+          (_, Terminal (Lod _ _ (Constant c))) -> return $ emulateInstruction i c
           _ -> return (Linear i simpleP)
       simplifyM fork@(Fork i l r) =
         let setRhs c = i & b .~ (Constant c)
@@ -395,9 +407,6 @@ clamp (Linear (Mul _ _ (Constant c)) p) = clamp p * singleton c
 clamp (Fork (Add _ _ _) l r) = clamp l + clamp r
 clamp (Linear (Add _ _ (Constant c)) p) = clamp p + singleton c
 
--- The 'N' stands for non-deterministic :-P
-type NALU = Map Register (MultiInterval IntR)
-
 -- Attempting to workaround excessively large interval problems
 -- created by the standard "clamp".
 -- We can only use the NALU to reason about the value of the
@@ -411,9 +420,9 @@ powerClamp nalu term@(Terminal (Inp _ a)) =
    in Maybe.fromMaybe regular intersected
 -- clamp (Linear (Eql _ _ _) _) = Range 0 1
 -- clamp (Fork (Eql _ _ _) _ _) = Range 0 1
-powerClamp nalu (Linear (Lod _ a (Reg b)) p) =
-  let bs = nalu !? b
-   in Maybe.fromMaybe (clamp p) bs
+-- powerClamp nalu (Linear (Lod _ a (Reg b)) p) =
+--   let bs = nalu !? b
+--    in Maybe.fromMaybe (clamp p) bs
 -- powerClamp nalu (Linear (Eql _ a (Constant c)) p) =
 --   let maybeAs = Elements <$> nalu !? a
 --       as = Maybe.fromMaybe (clamp p) maybeAs
@@ -447,6 +456,51 @@ powerClamp _ g = clamp g
 --       op = instructionOp i
 --       results = op <$> [lowerL, upperL] <*> [lowerR, upperR]
 --    in Range (minimum results) (maximum results)
+
+-- The 'N' stands for non-deterministic :-P
+type NALU = Map Register (MultiInterval IntR)
+
+invertNode :: NALU -> ProgramGraph -> NALU
+invertNode nalu node =
+  let aReg = (node ^. instr . a)
+      outputAs = nalu ! aReg
+      as = clamp . _left $ node
+      bs = possibleValues nalu . _right $ node
+      ps = powerClamp nalu . _parent $ node
+      aHasZero = outputAs `contains` 0
+      invertFork (Add _ _ _) = invertAdd as bs outputAs
+      invertFork (Mul _ _ _) = invertMul as bs outputAs
+      invertFork (Div _ _ _) = invertDiv as bs outputAs
+      invertFork (Mod _ _ _) = invertMod as bs outputAs
+      invertFork (Eql _ _ _)
+        | outputAs == singleton 1 = (ab, ab)
+        | otherwise = (as, bs)
+        where
+          ab = as `intersection` bs
+      invertLinear (Add _ _ (Constant c)) = fst $ invertAdd ps (singleton c) outputAs
+      invertLinear (Mul _ _ (Constant c)) = fst $ invertMul ps (singleton c) outputAs
+      invertLinear (Div _ _ (Constant c)) = fst $ invertDiv ps (singleton c) outputAs
+      invertLinear (Mod _ _ (Constant c)) = fst $ invertMod ps (singleton c) outputAs
+      invertLinear (Eql _ _ (Constant c))
+        | outputAs == singleton 1 = ps `intersection` (singleton c)
+        | outputAs == singleton 0 = ps `diff` (singleton c)
+        | otherwise = singleton c
+   in case node of
+        Fork i _ _ ->
+          let bReg = _r . _b $ i
+              (as', bs') = invertFork i
+              updates = Map.fromList [(aReg, as'), (bReg, bs')]
+           in updates <> nalu
+        Linear (Lod _ _ (Reg b)) p ->
+          let bs = possibleValues nalu p
+              bs' = MultiInterval.intersection outputAs bs
+           in Map.delete aReg . Map.insert b bs' $ nalu
+        Linear i _ -> Map.insert aReg (invertLinear i) nalu
+        Terminal (Inp _ _) ->
+          let check = (not . null . (`intersection` (1 ... 9)) $ outputAs)
+           in assert check $ Map.delete aReg nalu
+        Terminal (Lod _ _ (Constant c)) ->
+          assert (outputAs `contains` c) $ Map.delete aReg nalu
 
 possibleValues :: NALU -> ProgramGraph -> MultiInterval IntR
 possibleValues nalu g =
@@ -553,6 +607,14 @@ solveBackwards program nalu =
          in (ln, nalu') : (go nalu' $ Map.maxView queue')
    in go nalu $ Just (program, Map.empty)
 
+solveForwards :: ProgramGraph -> ProgramGraph
+solveForwards g =
+  let program = linearise g
+      (prefix, (Inp lineNumber register) : suffix) = List.span (not . isInp) program
+      rewrite = (Lod lineNumber register (Constant 9))
+      rewritten = prefix ++ (rewrite : suffix)
+   in simplify . graphify $ rewritten
+
 maybeOr :: Maybe a -> Maybe a -> Maybe a
 maybeOr a@(Just _) _ = a
 maybeOr _ a = a
@@ -591,40 +653,44 @@ enterTheMonad = do
   let p1 = linearise simple1
   traverse_ print p1
   print . clamp $ simple1
+  -- let p2 = linearise . graphify $ solveForwards simple1
+  let simple2 = solveForwards . solveForwards . solveForwards . solveForwards $ simple1
+
   let nalu1 = Map.singleton Z $ singleton 0
-  let nalu2 = solve simple1 nalu1
-  -- let nalu3 = solve (_right simple1) nalu2
-  -- let nalu4 = solve (_left . _right $ simple1) nalu3
-  -- let nalu5 = solve (_parent . _left . _right $ simple1) nalu4
-  -- let nalu6 = solve (_left simple1) nalu5
-  -- let nalu7 = solve (_right . _left $ simple1) nalu6
-  -- let nalu8 = solve (_parent . _right . _left $ simple1) nalu7
-  -- let nalu9 = solve (_left . _parent . _right . _left $ simple1) nalu8
-  -- let nalu10 = solve (_right . _parent . _right . _left $ simple1) nalu9
-  -- let nalu11 = solve (_parent . _right . _parent . _right . _left $ simple1) nalu10
-  -- let nalu12 = solve (_left . _parent . _right . _parent . _right . _left $ simple1) nalu11
-  -- let nalu13 = solve (_left . _left $ simple1) nalu12
+  let nalu2 = invertNode nalu1 $ simple1
+  let nalu3 = invertNode nalu2 . _right $ simple1
+  let nalu4 = invertNode nalu3 . _left . _right $ simple1
+  let nalu5 = invertNode nalu4 . _parent . _left . _right $ simple1
+  let nalu6 = invertNode nalu5 . _left $ simple1
+  let nalu7 = invertNode nalu6 . _right . _left $ simple1
+  let nalu8 = invertNode nalu7 . _parent . _right . _left $ simple1
+  let nalu9 = invertNode nalu8 . _left . _parent . _right . _left $ simple1
+  let nalu10 = invertNode nalu9 . _right . _parent . _right . _left $ simple1
+  let nalu11 = invertNode nalu10 . _parent . _right . _parent . _right . _left $ simple1
+  let nalu12 = invertNode nalu11 . _left . _parent . _right . _parent . _right . _left $ simple1
+  let nalu13 = invertNode nalu12 . _left . _left $ simple1
 
   -- let problemChild = _parent . _left . _parent . _right . _parent . _right . _left $ simple1
   -- let nalu14 = solve problemChild nalu13
   print nalu1
   print nalu2
-  -- print nalu3
-  -- print nalu4
-  -- print nalu5
-  -- print nalu6
-  -- print nalu7
-  -- print nalu8
-  -- print nalu9
-  -- print nalu10
-  -- print nalu11
-  -- print nalu12
-  -- print nalu13
-  -- print nalu14
-  putStrLn "============="
-  let blargh = solveBackwards simple1 nalu1
-  let bloop = takeWhile ((>= 235) . fst) blargh
-  -- print . head . tail . reverse $ blargh
-  traverse_ print blargh
+  print nalu3
+  print nalu4
+  print nalu5
+  print nalu6
+  print nalu7
+  print nalu8
+  print nalu9
+  print nalu10
+  print nalu11
+  print nalu12
+  print nalu13
+
+-- print nalu14
+-- putStrLn "============="
+-- let blargh = solveBackwards simple2 nalu1
+-- let bloop = takeWhile ((>= 235) . fst) blargh
+-- -- print . head . tail . reverse $ blargh
+-- traverse_ print blargh
 
 -- print $ clamp problemChild
