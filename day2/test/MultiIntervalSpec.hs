@@ -153,3 +153,40 @@ prop_unionOfDiffsIsDiffOfIntersection as bs =
 unit_iquotNegCrossesZero =
   let as = (-4) ... 4
    in as `iquot` as `shouldBe` as
+
+unit_invertXsDiv26Eq3 =
+  let (xs, ys) = invertDiv ((-100) ... 100) (singleton 26) (singleton 3)
+   in (xs `shouldBe` (78 ... 100)) <> (ys `shouldBe` (singleton 26))
+
+unit_invertXsDiv26Eq0 =
+  let (xs, ys) = invertDiv ((-100) ... 100) (singleton 26) (singleton 0)
+   in (xs `shouldBe` ((-25) ... 25)) <> (ys `shouldBe` (singleton 26))
+
+unit_invertXsDiv5Eq1To3 =
+  let (xs, ys) = invertDiv (0 ... 25) (singleton 5) (1 ... 3)
+   in (xs `shouldBe` (5 ... 19)) <> (ys `shouldBe` (singleton 5))
+
+unit_invertXsDiv6Eq0To4 =
+  let (xs, ys) = invertDiv ((-50) ... 50) (singleton 6) (0 ... 4)
+   in (xs `shouldBe` ((-5) ... 29)) <> (ys `shouldBe` (singleton 6))
+
+unit_invertXsDiv7EqDisjointInterval =
+  let ys = singleton 7
+      zs = ((-15) ... (-12)) `union` ((-4) ... (-2)) `union` (5 ... 7) `union` (11 ... 14)
+      xs = ((-200) ... 150)
+      expectedXs = ((-111) ... (-84)) `union` ((-34) ... (-14)) `union` (35 ... 55) `union` (77 ... 104)
+      (xs', ys') = invertDiv xs ys zs
+   in (xs' `shouldBe` expectedXs) <> (ys' `shouldBe` ys)
+
+unit_invertXsDivDisjointEqDisjoint =
+  let ys = ((-3) ... (-1)) `union` (6 ... 7)
+      zs = ((-15) ... (-12)) `union` ((-4) ... (-2)) `union` (5 ... 7) `union` (11 ... 14)
+      xs = ((-200) ... 150)
+      expectedXs =
+        ((-111) ... (-72)) `union` ((-34) ... (-12)) `union` (30 ... 55) `union` (66 ... 104)
+          `union` (12 ... 47)
+          `union` (2 ... 14)
+          `union` ((-23) ... (-5))
+          `union` ((-11) ... (-44))
+      (xs', ys') = invertDiv xs ys zs
+   in (xs' `shouldBe` expectedXs) <> (ys' `shouldBe` ys)

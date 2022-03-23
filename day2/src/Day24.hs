@@ -508,17 +508,17 @@ possibleValues nalu g =
       clampOutputs = powerClamp nalu g
    in Maybe.fromMaybe clampOutputs maybeOutputs
 
-solve :: ProgramGraph -> NALU -> NALU
+solve :: NALU -> ProgramGraph -> NALU
 -- Inp and Lod instructions don't allow us to infer anything about the value that might
 -- have been in register A before it was executed.
 -- We have to clear the possible values of register A before moving onto
 -- the previous instruction.
-solve (Terminal (Inp _ a)) nalu = Map.delete a nalu
-solve (Terminal (Lod _ a (Constant c))) nalu =
+solve nalu (Terminal (Inp _ a)) = Map.delete a nalu
+solve nalu (Terminal (Lod _ a (Constant c))) =
   let as = nalu ! a
       nalu' = Map.delete a nalu
    in assert (as `contains` c) nalu'
-solve (Linear (Lod _ a (Reg b)) p) nalu =
+solve nalu (Linear (Lod _ a (Reg b)) p) =
   -- Weird case that is constructed through simplification of the program graph.
   -- This simply copies the value of register B into register A
   -- For such an instruction, we should be able to get away with setting the
@@ -532,7 +532,7 @@ solve (Linear (Lod _ a (Reg b)) p) nalu =
       bs' = MultiInterval.intersection as bs
       nalu' = Map.delete a . Map.insert b bs' $ nalu
    in assert (not . MultiInterval.null $ bs') nalu'
-solve (Linear instr p) nalu =
+solve nalu (Linear instr p) =
   let a = _a instr
       (Constant b) = _b instr
       outputAs = toList $ nalu ! a
@@ -541,7 +541,7 @@ solve (Linear instr p) nalu =
       as = (`intersection` aBounds) . _values . invertInstruction instr aBounds (singleton b) <$> outputAs
       as' = fold as
    in Map.insert a as' nalu
-solve (Fork instr l r) nalu =
+solve nalu (Fork instr l r) =
   let a = _a instr
       b = _r . _b $ instr
       -- We can't infer the possible input A register values from the current
@@ -593,7 +593,7 @@ solveBackwards :: ProgramGraph -> NALU -> [(IntR, NALU)]
 solveBackwards program nalu =
   let go nalu Nothing = []
       go nalu (Just (g, queue)) =
-        let nalu' = solve g nalu
+        let nalu' = invertNode nalu g
             ln = g ^. instr . lineNumber
             queue' = case g of
               Terminal _ -> queue
@@ -657,18 +657,18 @@ enterTheMonad = do
   let simple2 = solveForwards . solveForwards . solveForwards . solveForwards $ simple1
 
   let nalu1 = Map.singleton Z $ singleton 0
-  let nalu2 = invertNode nalu1 $ simple1
-  let nalu3 = invertNode nalu2 . _right $ simple1
-  let nalu4 = invertNode nalu3 . _left . _right $ simple1
-  let nalu5 = invertNode nalu4 . _parent . _left . _right $ simple1
-  let nalu6 = invertNode nalu5 . _left $ simple1
-  let nalu7 = invertNode nalu6 . _right . _left $ simple1
-  let nalu8 = invertNode nalu7 . _parent . _right . _left $ simple1
-  let nalu9 = invertNode nalu8 . _left . _parent . _right . _left $ simple1
-  let nalu10 = invertNode nalu9 . _right . _parent . _right . _left $ simple1
-  let nalu11 = invertNode nalu10 . _parent . _right . _parent . _right . _left $ simple1
-  let nalu12 = invertNode nalu11 . _left . _parent . _right . _parent . _right . _left $ simple1
-  let nalu13 = invertNode nalu12 . _left . _left $ simple1
+  let nalu2 = solve nalu1 $ simple1
+  let nalu3 = solve nalu2 . _right $ simple1
+  let nalu4 = solve nalu3 . _left . _right $ simple1
+  let nalu5 = solve nalu4 . _parent . _left . _right $ simple1
+  let nalu6 = solve nalu5 . _left $ simple1
+  let nalu7 = solve nalu6 . _right . _left $ simple1
+  let nalu8 = solve nalu7 . _parent . _right . _left $ simple1
+  let nalu9 = solve nalu8 . _left . _parent . _right . _left $ simple1
+  let nalu10 = solve nalu9 . _right . _parent . _right . _left $ simple1
+  let nalu11 = solve nalu10 . _parent . _right . _parent . _right . _left $ simple1
+  let nalu12 = solve nalu11 . _left . _parent . _right . _parent . _right . _left $ simple1
+  let nalu13 = solve nalu12 . _left . _left $ simple1
 
   -- let problemChild = _parent . _left . _parent . _right . _parent . _right . _left $ simple1
   -- let nalu14 = solve problemChild nalu13
@@ -686,11 +686,11 @@ enterTheMonad = do
   print nalu12
   print nalu13
 
--- print nalu14
--- putStrLn "============="
--- let blargh = solveBackwards simple2 nalu1
--- let bloop = takeWhile ((>= 235) . fst) blargh
--- -- print . head . tail . reverse $ blargh
--- traverse_ print blargh
+  -- print nalu14
+  -- putStrLn "============="
+  let blargh = solveBackwards simple1 nalu1
+  -- let bloop = takeWhile ((>= 235) . fst) blargh
+  -- print . head . tail . reverse $ blargh
+  traverse_ print blargh
 
 -- print $ clamp problemChild

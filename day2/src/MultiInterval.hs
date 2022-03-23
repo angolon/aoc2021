@@ -26,7 +26,7 @@ import Prelude hiding (null)
 data MultiInterval a = MI
   { _intervals :: Set (Interval a)
   }
-  deriving (Eq, Show)
+  deriving (Eq)
 
 singleton :: a -> MultiInterval a
 singleton = MI . Set.singleton . Interval.singleton
@@ -158,6 +158,33 @@ imod a@(MI as) b@(MI bs)
     let b' = b `diff` singleton 0 -- Avoid division by zero
      in cross (Interval.imod) a b'
 
+positives :: (Integral a) => MultiInterval a -> MultiInterval a
+positives as
+  | null as = empty
+  | upperA > 0 = (1 ... upperA) `intersection` as
+  | otherwise = empty
+  where
+    upperA = upperBound as
+
+negatives :: (Integral a) => MultiInterval a -> MultiInterval a
+negatives as
+  | null as = empty
+  | lowerA < 0 = (lowerA ... (-1)) `intersection` as
+  | otherwise = empty
+  where
+    lowerA = lowerBound as
+
+hullIntervals :: Ord a => MultiInterval a -> MultiInterval a
+hullIntervals (MI as) = case Set.minView as of
+  Just (a, as) -> fromInterval $ Set.foldl' (Interval.hull) a as
+  Nothing -> empty
+
+hull :: Integral a => MultiInterval a -> MultiInterval a -> MultiInterval a
+hull as bs = cross (Interval.hull) as' bs'
+  where
+    as' = hullIntervals as
+    bs' = hullIntervals bs
+
 toList :: (Integral a) => MultiInterval a -> [a]
 toList (MI as) =
   let intervalToList i = [(Interval.inf i) .. (Interval.sup i)]
@@ -182,21 +209,61 @@ invertMul xs ys zs =
           else (zs `iquot` xs') `intersection` ys
    in (xs', ys')
 
+-- This is all trash, at a certain point I've given up and just thinking
+-- about cases where the `ys` argements have a single value.
 invertDiv :: Integral a => MultiInterval a -> MultiInterval a -> MultiInterval a -> (MultiInterval a, MultiInterval a)
 invertDiv xs ys zs =
   -- x / y = z ==> y = x / z
   -- x / y = z ==> x = y * z
   let zHasZero = zs `contains` 0
-      smallestZ = lowerBound . abs $ zs
+      smallestZ = subtract 1 . lowerBound . abs $ zs
       notXs =
         -- x can never have a smaller magnitude than z
         if zHasZero
           then empty
           else (- smallestZ) ... smallestZ
+
+      -- Ignore any potential divide by zero.
+      yPos = positives ys
+      yNeg = negatives ys
+      zPos = positives zs
+      zNeg = negatives zs
+
       -- inverting based on multiplication can't use our fancy multiplication that
       -- skips certain numbers - truncated division would succeed for those numbers that
       -- we try to ignore.
-      xs' = (`diff` notXs) . (`intersection` xs) $ cross (*) zs ys
+      smallPosXPosY = cross (*) zPos yPos
+      smallPosXNegY = cross (*) zPos yNeg
+      smallNegXPosY = cross (*) zNeg yPos
+      smallNegXNegY = cross (*) zNeg yNeg
+
+      expand sign lower adjustment =
+        let shifted = case sign of
+              1 -> adjustment - (Interval.singleton 1)
+              -1 -> adjustment + (Interval.singleton 1)
+            -- shrunk = adjustment `Interval.intersection` shifted
+            -- expanded = Interval.hull lower . (lower +) <$> shrunk
+            expanded = Interval.hull lower (lower + shifted)
+         in -- in Maybe.fromMaybe lower expanded
+            expanded
+
+      posXPosY = cross (expand 1) smallPosXPosY yPos
+      negXPosY = cross (expand (-1)) smallNegXPosY (negate yPos)
+
+      posXNegY = cross (expand (-1)) smallPosXNegY yNeg
+      negXNegY = cross (expand 1) smallNegXNegY (negate yNeg)
+      -- bigPosXPosY = hull smallPosXPosY $ smallPosXPosY + yPos - (singleton 1)
+      -- bigNegXPosY = hull smallNegXPosY $ smallNegXPosY - yPos + (singleton 1)
+      -- bigPosXNegY = hull smallPosXNegY $ smallPosXNegY - yNeg + (singleton 1)
+      -- bigNegXNegY = hull smallNegXNegY $ smallNegXNegY + yNeg - (singleton 1)
+
+      largestY = upperBound . abs $ ys
+      zxMagnitude = largestY - 1
+
+      zeroXs = if zHasZero then ((- zxMagnitude) ... zxMagnitude) else empty
+
+      allXs = Foldable.fold [posXPosY, negXPosY, posXNegY, negXNegY, zeroXs]
+      xs' = (allXs `intersection` xs) `diff` notXs
       ys' =
         if
             | zHasZero && (xs' `contains` 0) -> ys -- 0 / y = 0 => y could be anything
@@ -263,6 +330,10 @@ invertMod xs ys zs =
 -- toSet (Elements es) = es
 -- toSet range = Set.fromList . toList $ range
 --
+
+instance Show a => Show (MultiInterval a) where
+  show = show . Set.toList . _intervals
+
 instance Integral a => Semigroup (MultiInterval a) where
   (<>) = union
 
