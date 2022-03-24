@@ -99,39 +99,3 @@ unit_invertBDiv8Eq0 =
   let inverted = invertInstruction (Div 1 X (Reg Y)) ((-8) ... 8) (8 ... 8) 0
       as = _r2ToR1 inverted 8
    in as `shouldBe` (-7) ... 7
-
-unit_clampNegMul =
-  let instrs =
-        [ (Inp 1 W),
-          (Add 2 W (Constant (-5))),
-          (Inp 3 X),
-          (Add 4 X (Constant (-5))),
-          (Mul 5 X (Reg W))
-        ]
-      g = simplify . graphify $ instrs
-   in clamp g `shouldBe` ((-16) ... 16)
-
-unit_clampNegDivCrossesZero =
-  let instrs =
-        [ (Inp 1 W),
-          (Add 2 W (Constant (-5))),
-          (Inp 3 X),
-          (Add 4 X (Constant (-5))),
-          (Div 5 X (Reg W))
-        ]
-      g = simplify . graphify $ instrs
-   in clamp g `shouldBe` ((-4) ... 4)
-
-unit_clampNegDiv =
-  let instrs =
-        [ (Inp 1 X),
-          (Add 2 X (Constant (-21))),
-          (Inp 3 W),
-          (Add 4 W (Constant 3)),
-          (Div 5 X (Reg W))
-        ]
-      g = simplify . graphify $ instrs
-   in clamp g `shouldBe` ((-5) ... (-1))
-
----- TODO: how handle negative mod operands
-----

@@ -10,7 +10,7 @@
 
 module Day24 where
 
-import Control.Arrow
+import Control.Arrow hiding (left)
 import Control.Exception (assert)
 import Control.Lens hiding (contains, (...))
 import Control.Monad
@@ -25,10 +25,9 @@ import Data.Int (Int32 (..))
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Map (Map, (!), (!?))
-import qualified Data.Map as Map
-import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
+import Data.Map.Strict (Map, (!), (!?))
+import qualified Data.Map.Strict as Map
 import qualified Data.Maybe as Maybe
 import Data.Monoid (Endo (..), Product (..), Sum (..), getSum)
 import Data.Ord (Down (..))
@@ -51,33 +50,38 @@ type IntR = Int
 
 data Register = W | X | Y | Z deriving (Eq, Show, Ord)
 
-data ALU = ALU
-  { _w :: IntR,
-    _x :: IntR,
-    _y :: IntR,
-    _z :: IntR
+data BaseALU a = ALU
+  { _w :: a,
+    _x :: a,
+    _y :: a,
+    _z :: a
   }
   deriving (Eq, Ord, Show)
 
-makeLenses ''ALU
+makeLenses ''BaseALU
 
 data Variable = Reg {_r :: Register} | Constant {_c :: IntR} deriving (Eq, Show, Ord)
 
-getR :: Register -> ALU -> IntR
+getR :: Register -> BaseALU a -> a
 getR W = _w
 getR X = _x
 getR Y = _y
 getR Z = _z
 
-setR :: Register -> IntR -> ALU -> ALU
+setR :: Register -> a -> BaseALU a -> BaseALU a
 setR W = set w
 setR X = set x
 setR Y = set y
 setR Z = set z
 
-getV :: Variable -> ALU -> IntR
+getV :: Num a => Variable -> BaseALU a -> a
 getV (Reg r) = getR r
-getV (Constant c) = const c
+getV (Constant c) = const $ fromIntegral c
+
+type ALU = BaseALU IntR
+
+-- The 'N' stands for non-deterministic :-P
+type NALU = BaseALU (MultiInterval IntR)
 
 data Instruction
   = Inp {_lineNumber :: IntR, _a :: Register}
@@ -393,32 +397,50 @@ rangeInBounds bounds as@(a : _) =
         then []
         else takeWhile (bounds `contains`) . dropWhile (< lower) $ as
 
-clamp :: ProgramGraph -> MultiInterval IntR
-clamp (Terminal (Inp _ _)) = 1 ... 9
-clamp (Linear (Eql _ _ _) _) = 0 ... 1
-clamp (Fork (Eql _ _ _) _ _) = 0 ... 1
-clamp (Terminal (Lod _ _ (Constant c))) = singleton c
-clamp (Linear (Lod _ _ _) p) = clamp p
-clamp (Fork (Mod _ _ _) l r) = clamp l `imod` clamp r
-clamp (Linear (Mod _ _ (Constant c)) p) = clamp p `imod` singleton c
-clamp (Fork (Div _ _ _) l r) = clamp l `iquot` clamp r
-clamp (Linear (Div _ _ (Constant c)) p) = clamp p `iquot` singleton c
-clamp (Fork (Mul _ _ _) l r) = clamp l * clamp r
-clamp (Linear (Mul _ _ (Constant c)) p) = clamp p * singleton c
-clamp (Fork (Add _ _ _) l r) = clamp l + clamp r
-clamp (Linear (Add _ _ (Constant c)) p) = clamp p + singleton c
+nRunInstruction :: NALU -> Instruction -> NALU
+nRunInstruction nalu instr =
+  let aReg = instr ^. a
+      as = getR aReg nalu
+      bs = getV (_b instr) nalu
+      as' = case instr of
+        (Inp _ _) -> 1 ... 9
+        (Lod _ _ _) -> bs
+        (Add _ _ _) -> as + bs
+        (Mul _ _ _) -> as * bs
+        (Div _ _ _) -> as `iquot` bs
+        (Mod _ _ _) -> as `imod` bs
+        (Eql _ _ _) ->
+          let abs = as `intersection` bs
+           in if
+                  | null abs -> singleton 0
+                  | isSingleton as && isSingleton bs && as == bs -> singleton 1
+                  | otherwise -> 0 ... 1
+   in setR aReg as' nalu
+
+type InstructionBounds = Map IntR NALU
+
+boundsFromProgram :: [Instruction] -> InstructionBounds
+boundsFromProgram =
+  let initialNALU = ALU (0 ... 0) (0 ... 0) (0 ... 0) (0 ... 0)
+      go _ accum [] = accum
+      go nalu accum (instr : program) =
+        let nalu' = nRunInstruction nalu instr
+            lineNumber = _lineNumber instr
+            accum' = Map.insert lineNumber nalu' accum
+         in go nalu' accum' program
+   in go initialNALU $ Map.singleton 0 initialNALU
 
 -- Attempting to workaround excessively large interval problems
 -- created by the standard "clamp".
 -- We can only use the NALU to reason about the value of the
 -- B register (except for Inp instructions, where we can reason
 -- about A)
-powerClamp :: NALU -> ProgramGraph -> MultiInterval IntR
-powerClamp nalu term@(Terminal (Inp _ a)) =
-  let regular = clamp term
-      powerful = nalu !? a
-      intersected = intersection regular <$> powerful
-   in Maybe.fromMaybe regular intersected
+-- powerClamp :: NALU -> ProgramGraph -> MultiInterval IntR
+-- powerClamp nalu term@(Terminal (Inp _ a)) =
+--   let regular = clamp term
+--       powerful = getR a nalu
+--       intersected = intersection regular <$> powerful
+--    in Maybe.fromMaybe regular intersected
 -- clamp (Linear (Eql _ _ _) _) = Range 0 1
 -- clamp (Fork (Eql _ _ _) _ _) = Range 0 1
 -- powerClamp nalu (Linear (Lod _ a (Reg b)) p) =
@@ -433,7 +455,7 @@ powerClamp nalu term@(Terminal (Inp _ a)) =
 --           | exclusive -> Range 1 1
 --           | inclusive -> Range 0 1
 --           | otherwise -> Range 0 0
-powerClamp _ g = clamp g
+-- powerClamp _ g = clamp g
 
 -- clamp (Fork (Mod _ _ _) l r) =
 --   let (Range _ upperL) = clamp l
@@ -458,17 +480,29 @@ powerClamp _ g = clamp g
 --       results = op <$> [lowerL, upperL] <*> [lowerR, upperR]
 --    in Range (minimum results) (maximum results)
 
--- The 'N' stands for non-deterministic :-P
-type NALU = Map Register (MultiInterval IntR)
-
-invertNode :: NALU -> ProgramGraph -> Maybe NALU
-invertNode nalu node =
-  let aReg = (node ^. instr . a)
-      outputAs = nalu ! aReg
-      as = clamp . _left $ node
-      bs = possibleValues nalu . _right $ node
-      ps = powerClamp nalu . _parent $ node
-      aHasZero = outputAs `contains` 0
+invertNode :: InstructionBounds -> NALU -> ProgramGraph -> Maybe NALU
+invertNode instructionBounds nalu node =
+  let instruction = node ^. instr
+      priorBounds =
+        let ln = instruction ^. lineNumber
+            earlier = Map.takeWhileAntitone (< ln) instructionBounds
+            (Just (prior, _)) = Map.maxView earlier
+         in prior
+      aReg = instruction ^. a
+      bReg = _r . _b $ instruction
+      possibleValues r =
+        let rs1 = getR r priorBounds
+            rs2 = getR r nalu
+         in if
+                | null rs2 -> rs1
+                | null rs1 -> rs2
+                | otherwise -> rs1 `intersection` rs2
+      outputAs = getR aReg nalu
+      as = getR aReg priorBounds
+      bs = possibleValues bReg
+      pInstruction = _instr . _parent $ node
+      pReg = pInstruction ^. a
+      ps = getR pReg priorBounds
       invertFork (Add _ _ _) = invertAdd as bs outputAs
       invertFork (Mul _ _ _) = invertMul as bs outputAs
       invertFork (Div _ _ _) = invertDiv as bs outputAs
@@ -485,101 +519,100 @@ invertNode nalu node =
       invertLinear (Eql _ _ (Constant c))
         | outputAs == singleton 1 = ps `intersection` (singleton c)
         | outputAs == singleton 0 = ps `diff` (singleton c)
-        | otherwise = singleton c
+        | otherwise = ps
    in case node of
         Fork i _ _ ->
           let bReg = _r . _b $ i
               (as', bs') = invertFork i
-              updates = Map.fromList [(aReg, as'), (bReg, bs')]
-              updated = updates <> nalu
+              updated = setR aReg as' . setR bReg bs' $ nalu
            in if null as' || null bs' then Nothing else Just updated
         Linear (Lod _ _ (Reg b)) p ->
-          let bs = possibleValues nalu p
-              bs' = outputAs `intersection` bs
-              updated = Map.delete aReg . Map.insert b bs' $ nalu
+          let bs' = outputAs `intersection` bs
+              as' = empty
+              updated = setR aReg as' . setR b bs' $ nalu
            in if null bs' then Nothing else Just updated
         Linear i _ ->
           let ps' = invertLinear i
-              updated = Map.insert aReg ps' nalu
+              updated = setR aReg ps' nalu
            in if null ps' then Nothing else Just updated
         Terminal (Inp _ _) ->
           let check = (not . null . (`intersection` (1 ... 9)) $ outputAs)
-              updated = Map.delete aReg nalu
+              updated = setR aReg empty nalu
            in if check then Just updated else Nothing
         Terminal (Lod _ _ (Constant c)) ->
-          let updated = Map.delete aReg nalu
+          let updated = setR aReg empty nalu
            in if outputAs `contains` c then Just updated else Nothing
 
-possibleValues :: NALU -> ProgramGraph -> MultiInterval IntR
-possibleValues nalu g =
-  let maybeOutputs = (nalu !?) . _a . _instr $ g
-      clampOutputs = powerClamp nalu g
-   in Maybe.fromMaybe clampOutputs maybeOutputs
+-- possibleValues :: NALU -> ProgramGraph -> MultiInterval IntR
+-- possibleValues nalu g =
+--   let maybeOutputs = (nalu !?) . _a . _instr $ g
+--       clampOutputs = powerClamp nalu g
+--    in Maybe.fromMaybe clampOutputs maybeOutputs
 
-solve :: NALU -> ProgramGraph -> NALU
--- Inp and Lod instructions don't allow us to infer anything about the value that might
--- have been in register A before it was executed.
--- We have to clear the possible values of register A before moving onto
--- the previous instruction.
-solve nalu (Terminal (Inp _ a)) = Map.delete a nalu
-solve nalu (Terminal (Lod _ a (Constant c))) =
-  let as = nalu ! a
-      nalu' = Map.delete a nalu
-   in assert (as `contains` c) nalu'
-solve nalu (Linear (Lod _ a (Reg b)) p) =
-  -- Weird case that is constructed through simplification of the program graph.
-  -- This simply copies the value of register B into register A
-  -- For such an instruction, we should be able to get away with setting the
-  -- new values B to the intersection of their current possible
-  -- values.
-  -- Like the other `Lod` case, we will still need to clear the possible values
-  -- for register A, as we can't infer anything about its previous value from
-  -- a load instruction.
-  let as = nalu ! a
-      bs = possibleValues nalu p
-      bs' = MultiInterval.intersection as bs
-      nalu' = Map.delete a . Map.insert b bs' $ nalu
-   in assert (not . MultiInterval.null $ bs') nalu'
-solve nalu (Linear instr p) =
-  let a = _a instr
-      (Constant b) = _b instr
-      outputAs = toList $ nalu ! a
-      aBounds = powerClamp nalu p
+-- solve :: NALU -> ProgramGraph -> NALU
+-- -- Inp and Lod instructions don't allow us to infer anything about the value that might
+-- -- have been in register A before it was executed.
+-- -- We have to clear the possible values of register A before moving onto
+-- -- the previous instruction.
+-- solve nalu (Terminal (Inp _ a)) = Map.delete a nalu
+-- solve nalu (Terminal (Lod _ a (Constant c))) =
+--   let as = nalu ! a
+--       nalu' = Map.delete a nalu
+--    in assert (as `contains` c) nalu'
+-- solve nalu (Linear (Lod _ a (Reg b)) p) =
+--   -- Weird case that is constructed through simplification of the program graph.
+--   -- This simply copies the value of register B into register A
+--   -- For such an instruction, we should be able to get away with setting the
+--   -- new values B to the intersection of their current possible
+--   -- values.
+--   -- Like the other `Lod` case, we will still need to clear the possible values
+--   -- for register A, as we can't infer anything about its previous value from
+--   -- a load instruction.
+--   let as = nalu ! a
+--       bs = possibleValues nalu p
+--       bs' = MultiInterval.intersection as bs
+--       nalu' = Map.delete a . Map.insert b bs' $ nalu
+--    in assert (not . MultiInterval.null $ bs') nalu'
+-- solve nalu (Linear instr p) =
+--   let a = _a instr
+--       (Constant b) = _b instr
+--       outputAs = toList $ nalu ! a
+--       aBounds = powerClamp nalu p
 
-      as = (`intersection` aBounds) . _values . invertInstruction instr aBounds (singleton b) <$> outputAs
-      as' = fold as
-   in Map.insert a as' nalu
-solve nalu (Fork instr l r) =
-  let a = _a instr
-      b = _r . _b $ instr
-      -- We can't infer the possible input A register values from the current
-      -- state of the NALU, so we always need to use the `clamp` function to
-      -- guess what they could be.
-      as = clamp l
-      -- The possible B register values may already be known in the NALU.
-      -- (they won't change as a result of this instruction)
-      bs = possibleValues nalu r
-      outputAs = toList $ nalu ! a
-      -- Eliminate any infinite inversion output lists
-      solveYtoX boundsY cyToX =
-        let ys = MultiInterval.toList boundsY
-            xss = cyToX <*> ys
-            xs = fold xss
-         in (xs, boundsY)
-      -- find the smaller range to examine possibilities over:
-      aSpaceSize = size as
-      bSpaceSize = size bs
-      inv = invertInstruction instr as bs
-      lToR = _r1ToR2 . inv <$> outputAs
-      rToL = _r2ToR1 . inv <$> outputAs
-      (as', bs') =
-        if aSpaceSize >= bSpaceSize
-          then solveYtoX bs rToL
-          else -- Inverting in the other direction, so we need to swap
-          -- the answers for the left register back into the left
-          -- element of the tuple.
-            swap $ solveYtoX as lToR
-   in Map.fromList [(a, as'), (b, bs')] <> nalu
+--       as = (`intersection` aBounds) . _values . invertInstruction instr aBounds (singleton b) <$> outputAs
+--       as' = fold as
+--    in Map.insert a as' nalu
+-- solve nalu (Fork instr l r) =
+--   let a = _a instr
+--       b = _r . _b $ instr
+--       -- We can't infer the possible input A register values from the current
+--       -- state of the NALU, so we always need to use the `clamp` function to
+--       -- guess what they could be.
+--       as = clamp l
+--       -- The possible B register values may already be known in the NALU.
+--       -- (they won't change as a result of this instruction)
+--       bs = possibleValues nalu r
+--       outputAs = toList $ nalu ! a
+--       -- Eliminate any infinite inversion output lists
+--       solveYtoX boundsY cyToX =
+--         let ys = MultiInterval.toList boundsY
+--             xss = cyToX <*> ys
+--             xs = fold xss
+--          in (xs, boundsY)
+--       -- find the smaller range to examine possibilities over:
+--       aSpaceSize = size as
+--       bSpaceSize = size bs
+--       inv = invertInstruction instr as bs
+--       lToR = _r1ToR2 . inv <$> outputAs
+--       rToL = _r2ToR1 . inv <$> outputAs
+--       (as', bs') =
+--         if aSpaceSize >= bSpaceSize
+--           then solveYtoX bs rToL
+--           else -- Inverting in the other direction, so we need to swap
+--           -- the answers for the left register back into the left
+--           -- element of the tuple.
+--             swap $ solveYtoX as lToR
+--    in Map.fromList [(a, as'), (b, bs')] <> nalu
 
 graphToList :: ProgramGraph -> [ProgramGraph]
 graphToList root =
@@ -597,8 +630,8 @@ graphToList root =
          in g : (go $ Map.maxView queue')
    in go (Just (root, Map.empty))
 
-solveBackwards :: ProgramGraph -> NALU -> Maybe [(IntR, NALU)]
-solveBackwards program nalu =
+solveBackwards :: InstructionBounds -> ProgramGraph -> NALU -> Maybe [(IntR, NALU)]
+solveBackwards instructionBounds program nalu =
   let go nalu Nothing = Just []
       go nalu (Just (g, queue)) =
         let ln = g ^. instr . lineNumber
@@ -612,7 +645,7 @@ solveBackwards program nalu =
                     rLine = r ^. instr . lineNumber
                  in Map.insert lLine l . Map.insert rLine r $ queue
          in do
-              nalu' <- invertNode nalu g
+              nalu' <- invertNode instructionBounds nalu g
               went <- go nalu' $ Map.maxView queue'
               return $ (ln, nalu) : went
    in go nalu $ Just (program, Map.empty)
@@ -623,12 +656,13 @@ solveForwards nalu = gogo []
     gogo guesses g =
       let program = linearise g
           (prefix, suffix) = List.span (not . isInp) program
-          solutionBounds = solveBackwards g nalu
+          instructionBounds = boundsFromProgram program
+          solutionBounds = solveBackwards instructionBounds g nalu
           go _ [] = Just (guesses, g) -- no input instructions, no further rewriting needed
           go Nothing _ = Nothing
           go (Just bounds) ((Inp lineNumber register) : suffix') =
             let (Just (_, inputNalu)) = List.find ((== lineNumber) . fst) bounds
-                inputBounds = reverse . MultiInterval.toList $ inputNalu ! register
+                inputBounds = reverse . MultiInterval.toList . getR register $ inputNalu
                 attempt c =
                   let guesses' = c : guesses
                       load = (Lod lineNumber register (Constant c))
@@ -675,47 +709,13 @@ enterTheMonad = do
   (Right parsed) <- parseStdin parseProgram
   let simple1 = simplify . graphify $ parsed
   let p1 = linearise simple1
-  -- traverse_ print p1
-  -- print . clamp $ simple1
-  -- let p2 = linearise . graphify $ solveForwards simple1
+  let nalu1 = ALU empty empty empty (0 ... 0)
+  let instructionBounds = boundsFromProgram p1
+  let (Just (solution, simplified)) = solveForwards nalu1 simple1
+  -- let solution = solveForwards nalu1 simple1
+  print solution
+  traverse_ print $ linearise simplified
 
-  let nalu1 = Map.singleton Z $ singleton 0
-  -- let nalu2 = solve nalu1 $ simple1
-  -- let nalu3 = solve nalu2 . _right $ simple1
-  -- let nalu4 = solve nalu3 . _left . _right $ simple1
-  -- let nalu5 = solve nalu4 . _parent . _left . _right $ simple1
-  -- let nalu6 = solve nalu5 . _left $ simple1
-  -- let nalu7 = solve nalu6 . _right . _left $ simple1
-  -- let nalu8 = solve nalu7 . _parent . _right . _left $ simple1
-  -- let nalu9 = solve nalu8 . _left . _parent . _right . _left $ simple1
-  -- let nalu10 = solve nalu9 . _right . _parent . _right . _left $ simple1
-  -- let nalu11 = solve nalu10 . _parent . _right . _parent . _right . _left $ simple1
-  -- let nalu12 = solve nalu11 . _left . _parent . _right . _parent . _right . _left $ simple1
-  -- let nalu13 = solve nalu12 . _left . _left $ simple1
-
-  -- let problemChild = _parent . _left . _parent . _right . _parent . _right . _left $ simple1
-  -- let nalu14 = solve problemChild nalu13
-  -- print nalu1
-  -- print nalu2
-  -- print nalu3
-  -- print nalu4
-  -- print nalu5
-  -- print nalu6
-  -- print nalu7
-  -- print nalu8
-  -- print nalu9
-  -- print nalu10
-  -- print nalu11
-  -- print nalu12
-  -- print nalu13
-
-  -- print nalu14
-  -- putStrLn "============="
-  -- let (Just (solution, simplified)) = solveForwards nalu1 simple1
-  let solution = solveForwards nalu1 simple1
-  -- let bloop = takeWhile ((>= 235) . fst) blargh
-  -- print . head . tail . reverse $ blargh
-  print $ fmap fst solution
-  traverse_ print $ fmap (linearise . snd) solution
+-- print $ runWithInputs [5, 1, 9, 8, 3, 9, 9, 9, 9, 4, 7, 9, 9, 9] parsed
 
 -- print $ clamp problemChild

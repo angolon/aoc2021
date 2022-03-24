@@ -123,6 +123,9 @@ diff (MI as) (MI bs)
 size :: (Num a) => MultiInterval a -> a
 size (MI is) = Set.foldl' (\a b -> a + (width b)) (fromInteger 0) is
 
+isSingleton :: (Num a, Eq a) => MultiInterval a -> Bool
+isSingleton as = (Set.size . _intervals $ as) == 1 && (size as) == 0
+
 -- Unsafe, but I'm hoping my constructors/operators eliminate
 -- the possibility of an empty inner set.
 lowerBound :: Ord a => MultiInterval a -> a
