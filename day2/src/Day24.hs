@@ -618,26 +618,26 @@ solveBackwards program nalu =
    in go nalu $ Just (program, Map.empty)
 
 solveForwards :: NALU -> ProgramGraph -> Maybe ([IntR], ProgramGraph)
-solveForwards nalu g =
-  let program = linearise g
-      (prefix, suffix) = List.span (not . isInp) program
-      solutionBounds = solveBackwards g nalu
-      go _ [] = Just ([], g) -- no input instructions, no further rewriting needed
-      go Nothing _ = Nothing
-      go (Just bounds) ((Inp lineNumber register) : suffix') =
-        let (Just (_, inputNalu)) = List.find ((== lineNumber) . fst) bounds
-            inputBounds = reverse . MultiInterval.toList $ inputNalu ! register
-            attempt c =
-              let load = (Lod lineNumber register (Constant c))
-                  rewritten = prefix ++ (load : suffix')
-                  regraphed = simplify . graphify $ rewritten
-               in do
-                    (cs, g) <- solveForwards nalu regraphed
-                    let cs' = c : cs
-                    traceShow cs' $ return (cs', g)
-            successful = Maybe.catMaybes . fmap attempt $ inputBounds
-         in fst <$> List.uncons successful
-   in go solutionBounds suffix
+solveForwards nalu = gogo []
+  where
+    gogo guesses g =
+      let program = linearise g
+          (prefix, suffix) = List.span (not . isInp) program
+          solutionBounds = solveBackwards g nalu
+          go _ [] = Just (guesses, g) -- no input instructions, no further rewriting needed
+          go Nothing _ = Nothing
+          go (Just bounds) ((Inp lineNumber register) : suffix') =
+            let (Just (_, inputNalu)) = List.find ((== lineNumber) . fst) bounds
+                inputBounds = reverse . MultiInterval.toList $ inputNalu ! register
+                attempt c =
+                  let guesses' = c : guesses
+                      load = (Lod lineNumber register (Constant c))
+                      rewritten = prefix ++ (load : suffix')
+                      regraphed = traceShow guesses' $ (simplify . graphify $ rewritten)
+                   in gogo guesses' regraphed
+                successful = Maybe.catMaybes . fmap attempt $ inputBounds
+             in fst <$> List.uncons successful
+       in go solutionBounds suffix
 
 maybeOr :: Maybe a -> Maybe a -> Maybe a
 maybeOr a@(Just _) _ = a
@@ -711,10 +711,11 @@ enterTheMonad = do
 
   -- print nalu14
   -- putStrLn "============="
-  let (Just (solution, simplified)) = solveForwards nalu1 simple1
+  -- let (Just (solution, simplified)) = solveForwards nalu1 simple1
+  let solution = solveForwards nalu1 simple1
   -- let bloop = takeWhile ((>= 235) . fst) blargh
   -- print . head . tail . reverse $ blargh
-  print solution
-  traverse_ print $ linearise simplified
+  print $ fmap fst solution
+  traverse_ print $ fmap (linearise . snd) solution
 
 -- print $ clamp problemChild
