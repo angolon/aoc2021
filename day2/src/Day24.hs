@@ -38,6 +38,7 @@ import Data.Ratio
 import Data.Set (Set (..), union)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
+import Debug.Trace
 import Lib (MyParser, parseInt, parseStdin)
 import MultiInterval
 import Text.Parsec
@@ -460,7 +461,7 @@ powerClamp _ g = clamp g
 -- The 'N' stands for non-deterministic :-P
 type NALU = Map Register (MultiInterval IntR)
 
-invertNode :: NALU -> ProgramGraph -> NALU
+invertNode :: NALU -> ProgramGraph -> Maybe NALU
 invertNode nalu node =
   let aReg = (node ^. instr . a)
       outputAs = nalu ! aReg
@@ -490,17 +491,24 @@ invertNode nalu node =
           let bReg = _r . _b $ i
               (as', bs') = invertFork i
               updates = Map.fromList [(aReg, as'), (bReg, bs')]
-           in updates <> nalu
+              updated = updates <> nalu
+           in if null as' || null bs' then Nothing else Just updated
         Linear (Lod _ _ (Reg b)) p ->
           let bs = possibleValues nalu p
-              bs' = MultiInterval.intersection outputAs bs
-           in Map.delete aReg . Map.insert b bs' $ nalu
-        Linear i _ -> Map.insert aReg (invertLinear i) nalu
+              bs' = outputAs `intersection` bs
+              updated = Map.delete aReg . Map.insert b bs' $ nalu
+           in if null bs' then Nothing else Just updated
+        Linear i _ ->
+          let ps' = invertLinear i
+              updated = Map.insert aReg ps' nalu
+           in if null ps' then Nothing else Just updated
         Terminal (Inp _ _) ->
           let check = (not . null . (`intersection` (1 ... 9)) $ outputAs)
-           in assert check $ Map.delete aReg nalu
+              updated = Map.delete aReg nalu
+           in if check then Just updated else Nothing
         Terminal (Lod _ _ (Constant c)) ->
-          assert (outputAs `contains` c) $ Map.delete aReg nalu
+          let updated = Map.delete aReg nalu
+           in if outputAs `contains` c then Just updated else Nothing
 
 possibleValues :: NALU -> ProgramGraph -> MultiInterval IntR
 possibleValues nalu g =
@@ -589,12 +597,11 @@ graphToList root =
          in g : (go $ Map.maxView queue')
    in go (Just (root, Map.empty))
 
-solveBackwards :: ProgramGraph -> NALU -> [(IntR, NALU)]
+solveBackwards :: ProgramGraph -> NALU -> Maybe [(IntR, NALU)]
 solveBackwards program nalu =
-  let go nalu Nothing = []
+  let go nalu Nothing = Just []
       go nalu (Just (g, queue)) =
-        let nalu' = invertNode nalu g
-            ln = g ^. instr . lineNumber
+        let ln = g ^. instr . lineNumber
             queue' = case g of
               Terminal _ -> queue
               Linear _ p ->
@@ -604,16 +611,33 @@ solveBackwards program nalu =
                 let lLine = l ^. instr . lineNumber
                     rLine = r ^. instr . lineNumber
                  in Map.insert lLine l . Map.insert rLine r $ queue
-         in (ln, nalu') : (go nalu' $ Map.maxView queue')
+         in do
+              nalu' <- invertNode nalu g
+              went <- go nalu' $ Map.maxView queue'
+              return $ (ln, nalu) : went
    in go nalu $ Just (program, Map.empty)
 
-solveForwards :: ProgramGraph -> ProgramGraph
-solveForwards g =
+solveForwards :: NALU -> ProgramGraph -> Maybe ([IntR], ProgramGraph)
+solveForwards nalu g =
   let program = linearise g
-      (prefix, (Inp lineNumber register) : suffix) = List.span (not . isInp) program
-      rewrite = (Lod lineNumber register (Constant 9))
-      rewritten = prefix ++ (rewrite : suffix)
-   in simplify . graphify $ rewritten
+      (prefix, suffix) = List.span (not . isInp) program
+      solutionBounds = solveBackwards g nalu
+      go _ [] = Just ([], g) -- no input instructions, no further rewriting needed
+      go Nothing _ = Nothing
+      go (Just bounds) ((Inp lineNumber register) : suffix') =
+        let (Just (_, inputNalu)) = List.find ((== lineNumber) . fst) bounds
+            inputBounds = reverse . MultiInterval.toList $ inputNalu ! register
+            attempt c =
+              let load = (Lod lineNumber register (Constant c))
+                  rewritten = prefix ++ (load : suffix')
+                  regraphed = simplify . graphify $ rewritten
+               in do
+                    (cs, g) <- solveForwards nalu regraphed
+                    let cs' = c : cs
+                    traceShow cs' $ return (cs', g)
+            successful = Maybe.catMaybes . fmap attempt $ inputBounds
+         in fst <$> List.uncons successful
+   in go solutionBounds suffix
 
 maybeOr :: Maybe a -> Maybe a -> Maybe a
 maybeOr a@(Just _) _ = a
@@ -651,46 +675,46 @@ enterTheMonad = do
   (Right parsed) <- parseStdin parseProgram
   let simple1 = simplify . graphify $ parsed
   let p1 = linearise simple1
-  traverse_ print p1
-  print . clamp $ simple1
+  -- traverse_ print p1
+  -- print . clamp $ simple1
   -- let p2 = linearise . graphify $ solveForwards simple1
-  let simple2 = solveForwards . solveForwards . solveForwards . solveForwards $ simple1
 
   let nalu1 = Map.singleton Z $ singleton 0
-  let nalu2 = solve nalu1 $ simple1
-  let nalu3 = solve nalu2 . _right $ simple1
-  let nalu4 = solve nalu3 . _left . _right $ simple1
-  let nalu5 = solve nalu4 . _parent . _left . _right $ simple1
-  let nalu6 = solve nalu5 . _left $ simple1
-  let nalu7 = solve nalu6 . _right . _left $ simple1
-  let nalu8 = solve nalu7 . _parent . _right . _left $ simple1
-  let nalu9 = solve nalu8 . _left . _parent . _right . _left $ simple1
-  let nalu10 = solve nalu9 . _right . _parent . _right . _left $ simple1
-  let nalu11 = solve nalu10 . _parent . _right . _parent . _right . _left $ simple1
-  let nalu12 = solve nalu11 . _left . _parent . _right . _parent . _right . _left $ simple1
-  let nalu13 = solve nalu12 . _left . _left $ simple1
+  -- let nalu2 = solve nalu1 $ simple1
+  -- let nalu3 = solve nalu2 . _right $ simple1
+  -- let nalu4 = solve nalu3 . _left . _right $ simple1
+  -- let nalu5 = solve nalu4 . _parent . _left . _right $ simple1
+  -- let nalu6 = solve nalu5 . _left $ simple1
+  -- let nalu7 = solve nalu6 . _right . _left $ simple1
+  -- let nalu8 = solve nalu7 . _parent . _right . _left $ simple1
+  -- let nalu9 = solve nalu8 . _left . _parent . _right . _left $ simple1
+  -- let nalu10 = solve nalu9 . _right . _parent . _right . _left $ simple1
+  -- let nalu11 = solve nalu10 . _parent . _right . _parent . _right . _left $ simple1
+  -- let nalu12 = solve nalu11 . _left . _parent . _right . _parent . _right . _left $ simple1
+  -- let nalu13 = solve nalu12 . _left . _left $ simple1
 
   -- let problemChild = _parent . _left . _parent . _right . _parent . _right . _left $ simple1
   -- let nalu14 = solve problemChild nalu13
-  print nalu1
-  print nalu2
-  print nalu3
-  print nalu4
-  print nalu5
-  print nalu6
-  print nalu7
-  print nalu8
-  print nalu9
-  print nalu10
-  print nalu11
-  print nalu12
-  print nalu13
+  -- print nalu1
+  -- print nalu2
+  -- print nalu3
+  -- print nalu4
+  -- print nalu5
+  -- print nalu6
+  -- print nalu7
+  -- print nalu8
+  -- print nalu9
+  -- print nalu10
+  -- print nalu11
+  -- print nalu12
+  -- print nalu13
 
   -- print nalu14
   -- putStrLn "============="
-  let blargh = solveBackwards simple1 nalu1
+  let (Just (solution, simplified)) = solveForwards nalu1 simple1
   -- let bloop = takeWhile ((>= 235) . fst) blargh
   -- print . head . tail . reverse $ blargh
-  traverse_ print blargh
+  print solution
+  traverse_ print $ linearise simplified
 
 -- print $ clamp problemChild
