@@ -37,6 +37,7 @@ packages:
 #
 extra-deps:
 - monoidal-containers-0.6.1.0@sha256:5a15cf46aaf4472ca6aa7f4e4fbab903a902e6f320a000a4a9e60a649e4381c8,2219
+- bitset-1.4.8@sha256:20a61c3dc942da4691a1603947c6479480bd92fd93947c12c8571347ac66de72,2923
 # - acme-missiles-0.3
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a

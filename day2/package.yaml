@@ -35,6 +35,7 @@ dependencies:
 - mtl >= 2.2.2 && < 3
 - monad-loops >= 0.4.3 && < 1
 - intervals >= 0.9.2 && < 1
+- wide-word >= 0.1.1.2 && < 1
 
 library:
   source-dirs: src

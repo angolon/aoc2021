@@ -662,7 +662,7 @@ solveForwards nalu = gogo []
           go Nothing _ = Nothing
           go (Just bounds) ((Inp lineNumber register) : suffix') =
             let (Just (_, inputNalu)) = List.find ((== lineNumber) . fst) bounds
-                inputBounds = reverse . MultiInterval.toList . getR register $ inputNalu
+                inputBounds = MultiInterval.toList . getR register $ inputNalu
                 attempt c =
                   let guesses' = c : guesses
                       load = (Lod lineNumber register (Constant c))
@@ -713,7 +713,7 @@ enterTheMonad = do
   let instructionBounds = boundsFromProgram p1
   let (Just (solution, simplified)) = solveForwards nalu1 simple1
   -- let solution = solveForwards nalu1 simple1
-  print solution
+  print . reverse $ solution
   traverse_ print $ linearise simplified
 
 -- print $ runWithInputs [5, 1, 9, 8, 3, 9, 9, 9, 9, 4, 7, 9, 9, 9] parsed

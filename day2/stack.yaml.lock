@@ -11,6 +11,13 @@ packages:
       sha256: a4f25ce481d7fd898f85f246e661cfb13f5ca401284a8d9a66bafa17ff07da74
   original:
     hackage: monoidal-containers-0.6.1.0@sha256:5a15cf46aaf4472ca6aa7f4e4fbab903a902e6f320a000a4a9e60a649e4381c8,2219
+- completed:
+    hackage: bitset-1.4.8@sha256:20a61c3dc942da4691a1603947c6479480bd92fd93947c12c8571347ac66de72,2923
+    pantry-tree:
+      size: 845
+      sha256: c6e8d08c85df8319f7244c6c734ac85a8c642bdcf6e304778f83a2d224ca4887
+  original:
+    hackage: bitset-1.4.8@sha256:20a61c3dc942da4691a1603947c6479480bd92fd93947c12c8571347ac66de72,2923
 snapshots:
 - completed:
     size: 586296

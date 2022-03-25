@@ -1,6 +1,6 @@
 module Main where
 
-import Day24 (enterTheMonad)
+import Day25 (cucumberDance)
 
 main :: IO ()
-main = enterTheMonad
+main = cucumberDance
