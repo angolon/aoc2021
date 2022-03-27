@@ -15,9 +15,11 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 
 module Day25 where
 
+import Data.Bits
 import GHC.Exts (Constraint)
 import Control.Arrow
 import Control.Lens
@@ -73,38 +75,55 @@ type family Extra a where
 
 type NWords = (Div NBits BitWidth) + (Extra Con)
 
-type family ToZero a where
-  ToZero 0 = 0
-  ToZero n = ToZero (n - 1)
+type CmpWidth n = CmpNat n BitWidth
 
-type family Steps (a :: Nat) where
-  Steps 0 = '[0]
-  -- (n <= 256) => Steps n = '[0]
-  Steps n = n : Steps (n - 1)
+type family MoreWords cmp n where
+  MoreWords 'GT n = Left (n - 256)
+  MoreWords _ _ = Right ()
 
-class BitSet (n :: [Nat]) where
-  data BS n
-  -- empty :: BS n
-  -- testBit :: Int -> bs -> Bool
+type BSN (n :: Nat) = MoreWords (CmpWidth n) n
 
--- instance BitSet n where
---   data BS n = BSNil Word256 | BSCons Word256 (BS (n - 256))
---   empty =
---     if natVal (Proxy :: Proxy n) <= 256
---       then BSNil 0
---       else BSCons 0 (empty @(n - 256))
+class BitSet n where
+  data family BS n
 
--- instance (n <= 256, 257 <= m, s ~ (n + m)) => BitSet s where
---   data BS s = Bloop Word256
+  showBS :: BS n -> String
 
-instance BitSet '[0] where
-  data BS '[0] = BSNil Word256
+  empty :: BS n
 
-instance (n ~ (m:ns)) => BitSet n where
-  data BS n = BSCons Word256 (BS '[0])
+type BitSetN (n :: Nat) = BitSet (BSN n)
 
--- instance (BitSet n c, d ~ (m ~ (n + 256))) => BitSet m d where
--- instance (BitSet n c, d ~ (n <= m)) => BitSet m d where
+instance BitSet (Right ()) where
+  data BS (Right ()) = BSNil Word256
+
+  showBS (BSNil bits) = showHexWord256 bits
+
+  empty = BSNil 0
+
+instance (BitSetN n) => BitSet (Left (n :: Nat)) where
+  data BS (Left n) = BSCons Word256 (BS (BSN n))
+  showBS (BSCons bits words) = showHexWord256 bits ++ ", " ++ showBS words
+  empty = BSCons 0 empty
+
+instance Eq (BS (Right ())) where
+  (BSNil as) == (BSNil bs) = as == bs
+-- instance (n ~ 'Right()) => Eq (BS n) where
+--   (BSNil as) == (BSNil bs) = as == bs
+--   (BSNil as) /= (BSNil bs) = as /= bs
+
+-- instance (n ~ Right(), BitSet n) => Eq (BS n) where
+--   (BSNil as) == (BSNil bs) = as == bs
+--   (BSNil as) /= (BSNil bs) = as /= bs
+
+-- instance (BitSet n) => Eq (BS n) where
+--   (BSNil as) == (BSNil bs) = as == bs
+--   (BSCons a as) == (BSCons b bs) = a == b && as == bs
+--   -- (BSNil as) /= (BSNil bs) = as /= bs
+
+instance (Eq (BS (BSN m))) => Eq (BS (Left (m :: Nat))) where
+  (BSCons a as) == (BSCons b bs) = a == b && (as == bs)
+
+-- instance (n ~ Left m, BitSet n, BitSetN m, Eq (BS m)) => Eq (BS n) where
+--   (BSCons a as) == (BSCons b bs) = a == b && (as == bs)
 
 data Lane = Lane {_occupied :: Word256}
 
@@ -121,8 +140,19 @@ data Lane = Lane {_occupied :: Word256}
 
 -- data instance BitSet n where
 
+-- instance (BitSetN n) => Bits (BS n) where
+-- bloop
+-- bloop :: BS @(BSN 512)
+-- bloop = BSCons 0xFF
+
+blah =
+  let xs = empty @(BSN 512)
+      ys = empty @(BSN 512)
+   in xs == ys
+
 cucumberDance :: IO ()
 cucumberDance = do
   print $ natVal (Proxy :: Proxy NBits)
   print $ natVal (Proxy :: Proxy NWords)
-  print $ natVal (Proxy :: Proxy (ToZero NWords))
+  print . showBS $ empty @(BSN 257)
+  -- print . showBS $ BSCons @(BSN 512) 0xFFF $ BSNil 0xFF
