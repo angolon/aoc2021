@@ -25,6 +25,7 @@ source-repository head
 
 library
   exposed-modules:
+      BitSet
       Day10
       Day11
       Day12
@@ -105,6 +106,7 @@ test-suite day2-test
   type: exitcode-stdio-1.0
   main-is: Driver.hs
   other-modules:
+      BitSetSpec
       Day19Spec
       Day20Spec
       Day22Spec
