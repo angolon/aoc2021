@@ -131,21 +131,28 @@ instance
   empty = BSEnd zeroBits
 
   upperBitIndex = fromIntegral (natVal (Proxy :: Proxy (n)))
+  {-# INLINE upperBitIndex #-}
   lowerBitIndex = 0
+  {-# INLINE lowerBitIndex #-}
 
   singleBit i
     | 0 <= i && i < (upperBitIndex @w @(Right n)) = BSEnd $ bit i
     | otherwise = throw Overflow
+  {-# INLINE singleBit #-}
 
   bsTestBit (BSEnd w) i
     | 0 <= i && i < (upperBitIndex @w @(Right n)) = testBit w i
     | otherwise = throw Overflow
+  {-# INLINE bsTestBit #-}
 
   bsPopCount (BSEnd w) = popCount w
+  {-# INLINE bsPopCount #-}
 
   word (BSEnd w) = w
+  {-# INLINE word #-}
 
   wordMask = (1 `shiftL` (upperBitIndex @w @(Right n))) - 1
+  {-# INLINE wordMask #-}
 
   wordN 0 = word
   wordN _ = const zeroBits
@@ -158,29 +165,39 @@ instance
 
   shiftLWholeWords bs 0 = bs
   shiftLWholeWords _ _ = BSEnd zeroBits
+  {-# INLINE shiftLWholeWords #-}
 
   shiftLWithCarry (BSEnd w) n =
     let (carryOut, w') = shiftLCarry w n
      in (carryOut,) $ BSEnd w'
+  {-# INLINE shiftLWithCarry #-}
 
   shiftRWholeWords bs 0 = bs
   shiftRWholeWords _ _ = BSEnd zeroBits
+  {-# INLINE shiftRWholeWords #-}
 
   shiftRWithCarry (BSEnd w) n carryIn =
     let w' = w `shiftR` n
         w'' = carryIn .|. w'
      in BSEnd w''
+  {-# INLINE shiftRWithCarry #-}
 
   mapWords f (BSEnd w) = BSEnd . (.&. (wordMask @w @(Right n))) . f $ w
+  {-# INLINE mapWords #-}
+
   mapWords' f (BSEnd w) = BSEnd . f $ w
+  {-# INLINE mapWords' #-}
 
   zipWordsWith op (BSEnd w) (BSEnd v) = BSEnd $ w `op` v
+  {-# INLINE zipWordsWith #-}
 
   -- If BSEnd contains the first and only word, we can defer to the vanilla
   -- `shiftL` and `shiftR` operations.
   shiftLInit (BSEnd w) n = BSEnd . (.&. (wordMask @w @(Right n))) $ w `shiftL` n
+  {-# INLINE shiftLInit #-}
 
   shiftRInit (BSEnd w) n = BSEnd $ w `shiftR` n
+  {-# INLINE shiftRInit #-}
 
 instance
   ( Bits w,
@@ -194,11 +211,15 @@ instance
   data BS w (Left n) = BSCons w (BS w (BSN w n))
 
   bitsetWidth = fromInteger $ natVal (Proxy :: Proxy n)
+  {-# INLINE bitsetWidth #-}
 
   upperBitIndex = fromIntegral (natVal (Proxy :: Proxy (n)))
+  {-# INLINE upperBitIndex #-}
   lowerBitIndex = upperBitIndex @w @(BSN w n)
+  {-# INLINE lowerBitIndex #-}
 
   empty = BSCons zeroBits empty
+  {-# INLINE empty #-}
 
   singleBit i
     | i >= upperBitIndex @w @(Left n) = throw Overflow
@@ -206,6 +227,7 @@ instance
     | otherwise =
       let i' = i - (lowerBitIndex @w @(Left n))
        in BSCons (bit i') empty
+  {-# INLINE singleBit #-}
 
   bsTestBit (BSCons w ws) i
     | i >= upperBitIndex @w @(Left n) = throw Overflow
@@ -213,12 +235,16 @@ instance
     | otherwise =
       let i' = i - (lowerBitIndex @w @(Left n))
        in testBit w i'
+  {-# INLINE bsTestBit #-}
 
   bsPopCount (BSCons w ws) = popCount w + bsPopCount ws
+  {-# INLINE bsPopCount #-}
 
   word (BSCons word _) = word
+  {-# INLINE word #-}
 
   wordMask = (1 `shiftL` ((upperBitIndex @w @(Left n)) - (lowerBitIndex @w @(Left n)))) - 1
+  {-# INLINE wordMask #-}
 
   wordN 0 bs = word bs
   wordN n (BSCons _ ws) = wordN (n - 1) ws
@@ -243,12 +269,14 @@ instance
       let (carry, ws') = shiftLWithCarry ws n
           w' = ((w `shiftL` n) .|. carry) .&. (wordMask @w @(Left n))
        in BSCons w' ws'
+  {-# INLINE shiftLInit #-}
 
   shiftLWholeWords bs 0 = bs
   shiftLWholeWords bs@(BSCons w ws) n =
     let w' = wordN n bs
         ws' = shiftLWholeWords ws n
      in BSCons w' ws'
+  {-# INLINE shiftLWholeWords #-}
 
   shiftLWithCarry (BSCons w ws) n =
     let (carryOut, w') = shiftLCarry w n
@@ -256,6 +284,7 @@ instance
         w'' = w' .|. carryIn
         cons = BSCons w'' ws'
      in (carryOut, cons)
+  {-# INLINE shiftLWithCarry #-}
 
   shiftRInit bs@(BSCons w ws) n
     | n < 0 = throw Overflow
@@ -266,6 +295,7 @@ instance
           bs' = shiftRWholeWords bs nWords
        in shiftRInit bs' nBits
     | n < (wordWidth @Int @w) = shiftRWithCarry bs n zeroBits
+  {-# INLINE shiftRInit #-}
 
   shiftRWholeWords bs 0 = bs
   shiftRWholeWords bs@(BSCons w ws) n =
@@ -273,17 +303,22 @@ instance
         ws'' = setWordN (n - 1) w ws'
         w' = zeroBits
      in BSCons w' ws''
+  {-# INLINE shiftRWholeWords #-}
 
   shiftRWithCarry bs@(BSCons w ws) n carryIn =
     let (w', carryOut) = shiftRCarry w n
         w'' = w' .|. carryIn
         ws' = shiftRWithCarry ws n carryOut
      in BSCons w'' ws'
+  {-# INLINE shiftRWithCarry #-}
 
   mapWords f (BSCons w ws) = BSCons (f w .&. (wordMask @w @(Left n))) $ mapWords' f ws
+  {-# INLINE mapWords #-}
   mapWords' f (BSCons w ws) = BSCons (f w) $ mapWords' f ws
+  {-# INLINE mapWords' #-}
 
   zipWordsWith op (BSCons w ws) (BSCons v vs) = BSCons (w `op` v) $ zipWordsWith op ws vs
+  {-# INLINE zipWordsWith #-}
 
 instance (Eq w) => Eq (BS w (Right (n :: Nat))) where
   (BSEnd as) == (BSEnd bs) = as == bs
