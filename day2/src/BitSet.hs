@@ -59,49 +59,42 @@ import Text.Parsec
 import Text.Parsec.Char
 import Text.Show.Functions
 
-type WordT = Word64
-
-type Width = 139
-
-type Height = 137
-
 type family WordWidth (a :: Type) :: Nat where
   WordWidth Word8 = 8
   WordWidth Word16 = 16
   WordWidth Word32 = 32
   WordWidth Word64 = 64
 
-type NBits = Width * Height
-
 type Remainder w n = Mod n (WordWidth w)
-
-type Cmp w n = CmpNat (Remainder w n) 0
-
-type family Extra a where
-  Extra 'GT = 1
-  Extra _ = 0
-
-type NWords w n = (Div n (WordWidth w)) + (Extra (Cmp w n))
 
 type CmpRemainder w n = CmpNat (Remainder w n) 0
 
 type CmpWidth w n = CmpNat n (WordWidth w)
 
-type family MoreWords w cmpRemainder cmpWidth n where
-  MoreWords w 'GT 'GT n = Left (n - (Remainder w n))
-  MoreWords w 'EQ 'GT n = Left (n - (WordWidth w))
-  MoreWords _ 'EQ 'EQ n = Right n
+type family NextLength w n cmpRemainder cmpWidth where
+  NextLength w n 'GT 'GT = n - (Remainder w n)
+  NextLength w n 'EQ 'GT = n - (WordWidth w)
+  NextLength _ n 'EQ 'EQ = n
 
-type BSN w (n :: Nat) = MoreWords w (CmpRemainder w n) (CmpWidth w n) n
+type NextLength' w n = NextLength w n (CmpRemainder w n) (CmpWidth w n)
+
+type family MoreWords w n cmp where
+  MoreWords w n 'GT = Left n
+  MoreWords _ n 'EQ = Right n
+
+type MoreWords' w n = MoreWords w (NextLength' w n) (CmpWidth w (NextLength' w n))
+
+type BSN w (n :: Nat) = MoreWords' w n
 
 class BitSet w n where
   data BS w n
 
-  -- showBS :: BS w n -> String
-
   empty :: BS w n
 
   bitsetWidth :: Integral a => a
+  upperBitIndex :: Integral a => a
+  lowerBitIndex :: Integral a => a
+  singleBit :: Int -> BS w n
 
 type BitSetN w (n :: Nat) = BitSet w (BSN w n)
 
@@ -115,12 +108,29 @@ instance (Bits w, KnownNat n) => BitSet (w :: Type) (Right (n :: Nat)) where
 
   empty = BSEnd zeroBits
 
+  upperBitIndex = fromIntegral (natVal (Proxy :: Proxy (n)))
+  lowerBitIndex = 0
+
+  singleBit i
+    | 0 <= i && i < (upperBitIndex @w @(Right n)) = BSEnd $ bit i
+    | otherwise = throw Overflow
+
 instance (Bits w, KnownNat n, BitSetN w n) => BitSet (w :: Type) (Left (n :: Nat)) where
   data BS w (Left n) = BSCons w (BS w (BSN w n))
 
   bitsetWidth = fromInteger $ natVal (Proxy :: Proxy n)
 
+  upperBitIndex = fromIntegral (natVal (Proxy :: Proxy (n)))
+  lowerBitIndex = upperBitIndex @w @(BSN w n)
+
   empty = BSCons zeroBits empty
+
+  singleBit i
+    | i >= upperBitIndex @w @(Left n) = throw Overflow
+    | i < lowerBitIndex @w @(Left n) = BSCons zeroBits $ singleBit i
+    | otherwise =
+      let i' = i - (lowerBitIndex @w @(Left n))
+       in BSCons (bit i') empty
 
 instance (Eq w) => Eq (BS w (Right (n :: Nat))) where
   (BSEnd as) == (BSEnd bs) = as == bs
@@ -312,5 +322,5 @@ instance (Bits w, Eq (BS w n), ShiftHelper w n) => Bits (BS w n) where
   isSigned = const False
   rotate = undefined
   testBit = undefined
-  bit = undefined
+  bit = singleBit
   popCount = undefined

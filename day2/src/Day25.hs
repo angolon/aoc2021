@@ -59,6 +59,12 @@ import Text.Parsec
 import Text.Parsec.Char
 import Text.Show.Functions
 
+type WordT = Word64
+
+type Width = 139
+
+type Height = 137
+
 data Lane = Lane {_occupied :: WordT}
 
 -- data family BitSet (n :: Nat)
@@ -76,7 +82,17 @@ data Lane = Lane {_occupied :: WordT}
 --    in xs == ys
 
 blah :: BS Word64 (Left 257)
-blah = bit 275 :: BS Word64 (Left 257)
+blah =
+  let a = bit 256 :: BS Word64 (Left 257)
+      b = bit 0 :: BS Word64 (Left 257)
+      c = bit 1 :: BS Word64 (Left 257)
+      d = bit 64 :: BS Word64 (Left 257)
+      e = bit 128 :: BS Word64 (Left 257)
+      f = bit 192 :: BS Word64 (Left 257)
+   in a .|. b .|. c .|. d .|. e .|. f
+
+blag :: Int
+blag = lowerBitIndex @Word64 @(Left 257)
 
 cucumberDance :: IO ()
 cucumberDance = do
@@ -84,5 +100,7 @@ cucumberDance = do
   print $ (empty :: BS Word64 (BSN Word64 257))
   print $ bitsetWidth @Word64 @(Left 257)
   print blah
+  print blag
+  print $ (empty :: BS Word64 (Right 64))
 
 -- print . showBS $ BSCons @(BSN 512) 0xFFF $ BSEnd 0xFF
