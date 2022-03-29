@@ -108,6 +108,11 @@ class BitSet w n where
   -- The word at this index
   word :: BS w n -> w
 
+  -- Bitmask for bits in the word that are included in
+  -- this bitset. Only matters for the left-most word, which is
+  -- potentially shorter than a full word.
+  wordMask :: (Integral w, Bits w) => w
+
   -- The word at the n'th index
   -- All zeros if the index is past the end of the bitset
   wordN :: Int -> BS w n -> w
@@ -130,6 +135,10 @@ class BitSet w n where
   shiftLInit :: BS w n -> Int -> BS w n
 
   mapWords :: (w -> w) -> BS w n -> BS w n
+
+  -- Function used on words 2 to n, which can ignore masking. Not for public consumption.
+  mapWords' :: (w -> w) -> BS w n -> BS w n
+
   zipWordsWith :: (w -> w -> w) -> BS w n -> BS w n -> BS w n
 
 type BitSetN w (n :: Nat) = BitSet w (BSN w n)
@@ -166,6 +175,8 @@ instance
 
   word (BSEnd w) = w
 
+  wordMask = (1 `shiftL` (upperBitIndex @w @(Right n))) - 1
+
   wordN 0 = word
   wordN _ = const zeroBits
 
@@ -190,7 +201,9 @@ instance
         w'' = carryIn .|. w'
      in BSEnd w''
 
-  mapWords f (BSEnd w) = BSEnd . f $ w
+  mapWords f (BSEnd w) = BSEnd . (.&. (wordMask @w @(Right n))) . f $ w
+  mapWords' f (BSEnd w) = BSEnd . f $ w
+
   zipWordsWith op (BSEnd w) (BSEnd v) = BSEnd $ w `op` v
 
   -- If BSEnd contains the first and only word, we can defer to the vanilla
@@ -234,6 +247,8 @@ instance
   bsPopCount (BSCons w ws) = popCount w + bsPopCount ws
 
   word (BSCons word _) = word
+
+  wordMask = (1 `shiftL` ((upperBitIndex @w @(Left n)) - (lowerBitIndex @w @(Left n)))) - 1
 
   wordN 0 bs = word bs
   wordN n (BSCons _ ws) = wordN (n - 1) ws
@@ -294,7 +309,9 @@ instance
         ws' = shiftRWithCarry ws n carryOut
      in BSCons w'' ws'
 
-  mapWords f (BSCons w ws) = BSCons (f w) $ mapWords f ws
+  mapWords f (BSCons w ws) = BSCons (f w .&. (wordMask @w @(Left n))) $ mapWords' f ws
+  mapWords' f (BSCons w ws) = BSCons (f w) $ mapWords' f ws
+
   zipWordsWith op (BSCons w ws) (BSCons v vs) = BSCons (w `op` v) $ zipWordsWith op ws vs
 
 instance (Eq w) => Eq (BS w (Right (n :: Nat))) where
