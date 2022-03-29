@@ -65,7 +65,7 @@ unit_singleBit =
       a = singleBit 7
    in a `shouldSatisfy` (`testBit` 7)
 
-zeroBitsP ::
+bitSetProps ::
   forall b w n.
   ( Show b,
     Eq b,
@@ -75,8 +75,9 @@ zeroBitsP ::
     b ~ (BS w (FirstLength' w n)),
     Arbitrary b
   ) =>
+  String ->
   TestTree
-zeroBitsP =
+bitSetProps groupName =
   let zeroBits' :: b
       zeroBits' = zeroBits @b
 
@@ -133,8 +134,39 @@ zeroBitsP =
             masked = bs .&. mask
             shifted = (bs `shiftR` i) `shiftL` i
          in i < n ==> shifted `shouldBe` masked
+
+      rotateLnIdentity :: BitSetW w n -> IO ()
+      rotateLnIdentity bs = (bs `rotateL` n) `shouldBe` bs
+
+      rotateRnIdentity :: BitSetW w n -> IO ()
+      rotateRnIdentity bs = (bs `rotateR` n) `shouldBe` bs
+
+      -- rotations won't overflow, so we can test with plain integer arguments.
+      rotateLPreservesPopCount :: BitSetW w n -> Int -> IO ()
+      rotateLPreservesPopCount bs i = popCount (bs `rotateL` i) `shouldBe` popCount bs
+
+      rotateRPreservesPopCount :: BitSetW w n -> Int -> IO ()
+      rotateRPreservesPopCount bs i = popCount (bs `rotateR` i) `shouldBe` popCount bs
+
+      rotateLRIdentity :: BitSetW w n -> Int -> IO ()
+      rotateLRIdentity bs i = (bs `rotateL` i) `rotateR` i `shouldBe` bs
+
+      rotateRLIdentity :: BitSetW w n -> Int -> IO ()
+      rotateRLIdentity bs i = (bs `rotateR` i) `rotateL` i `shouldBe` bs
+
+      rotateLshiftLPartial :: BitSetW w n -> BitIndex w (FirstLength' w n) -> IO ()
+      rotateLshiftLPartial bs (BitIndex i) =
+        let rotBs = bs `rotateL` i
+            shiftBs = bs `shiftL` i
+         in rotBs .&. shiftBs `shouldBe` shiftBs
+
+      rotateRshiftRPartial :: BitSetW w n -> BitIndex w (FirstLength' w n) -> IO ()
+      rotateRshiftRPartial bs (BitIndex i) =
+        let rotBs = bs `rotateR` i
+            shiftBs = bs `shiftR` i
+         in rotBs .&. shiftBs `shouldBe` shiftBs
    in testGroup
-        "zeroBit laws"
+        groupName
         [ QC.testProperty "clearBit zeroBits n == zeroBits" clearProp,
           QC.testProperty "setBit zeroBits n == bit n" setBitProp,
           QC.testProperty "testBit zeroBits n == False" testBitProp,
@@ -150,19 +182,25 @@ zeroBitsP =
           QC.testProperty "bs `shiftR` n == zeroBits" shiftRN,
           QC.testProperty "bs `shiftR` 0 == bs" shiftR0,
           QC.testProperty "shifting left then right should preserve the bits on the right." shiftLR,
-          QC.testProperty "shifting right then left should preserve the bits on the left." shiftRL
+          QC.testProperty "shifting right then left should preserve the bits on the left." shiftRL,
+          QC.testProperty "bs `rotateL` n == bs" rotateLnIdentity,
+          QC.testProperty "bs `rotateR` n == bs" rotateRnIdentity,
+          QC.testProperty "popCount (bs `rotateL` n) == popCount bs" rotateLPreservesPopCount,
+          QC.testProperty "popCount (bs `rotateR` n) == popCount bs" rotateRPreservesPopCount,
+          QC.testProperty "rotateR n . rotateL n == id" rotateLRIdentity,
+          QC.testProperty "rotateL n . rotateR n == id" rotateRLIdentity,
+          QC.testProperty "rotateL and shiftL should match on the leftmost bits" rotateLshiftLPartial,
+          QC.testProperty "rotateR and shiftR should match on the rightmost bits" rotateRshiftRPartial
         ]
 
-test_partialSingleWord =
+test_BitSet =
   testGroup
-    "Partial Single Word BitSet properties"
-    [ zeroBitsP @(BitSetW Word64 52) @Word64 @52,
-      zeroBitsP @(BitSetW Word64 64) @Word64 @64,
-      zeroBitsP @(BitSetW Word64 103) @Word64 @103,
-      zeroBitsP @(BitSetW Word64 128) @Word64 @128
+    "BitSet properties"
+    [ bitSetProps @(BitSetW Word64 52) @Word64 @52 "partial single Word64",
+      bitSetProps @(BitSetW Word64 64) @Word64 @64 "whole single Word64",
+      bitSetProps @(BitSetW Word64 103) @Word64 @103 "partial double Word64",
+      bitSetProps @(BitSetW Word64 128) @Word64 @128 "whole double Word64",
+      bitSetProps @(BitSetW Word64 129) @Word64 @129 "partial triple Word64",
+      bitSetProps @(BitSetW Word64 192) @Word64 @192 "whole triple Word64",
+      bitSetProps @(BitSetW Word64 1903) @Word64 @1903 "Large bitset of Word64"
     ]
-
--- zeroBitsP :: (Bits w, BitSet w (Left n), Arbitrary (BS w n), KnownNat n) => forall w n. TestTree
--- zeroBitsP =
---   let clearProp (WordBitIndex i) = clearBit zeroBits i `shouldBe` zeroBits
---    in testGroup "zeroBit laws" [QC.testProperty "clearBit zeroBits n == zeroBits" clearProp]

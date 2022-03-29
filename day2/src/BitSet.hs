@@ -19,45 +19,15 @@
 
 module BitSet where
 
-import Control.Arrow
 import Control.Exception
-import Control.Lens
-import Control.Monad
-import Control.Monad.IO.Class (liftIO)
-import qualified Control.Monad.Loops as Loops
-import qualified Control.Monad.State.Lazy as S
-import Data.Bifunctor.Swap (swap)
 import Data.Bits
-import Data.Either (either)
-import Data.Foldable
-import Data.Function (on)
 import Data.Kind
-import qualified Data.List as List
-import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map.Monoidal as MMap
-import Data.Map.Strict (Map, (!), (!?))
-import qualified Data.Map.Strict as Map
-import qualified Data.Maybe as Maybe
-import Data.Monoid (Endo (..), Product (..), Sum (..), getSum)
-import Data.Ord (Down (..))
-import Data.PQueue.Prio.Max (MaxPQueue)
-import qualified Data.PQueue.Prio.Max as MaxPQueue
 import Data.Proxy
-import Data.Ratio
-import Data.Set (Set (..), union)
-import qualified Data.Set as Set
 import Data.Type.Equality
-import qualified Data.Vector as V
-import Debug.Trace
 import GHC.Exts (Constraint)
 import GHC.TypeLits
 import GHC.Word (Word16, Word32, Word64, Word8)
-import Lib (MyParser, parseInt, parseStdin)
 import Numeric (showHex)
-import Text.Parsec
-import Text.Parsec.Char
-import Text.Show.Functions
 
 type family WordWidth (a :: Type) :: Nat where
   WordWidth Word8 = 8
@@ -327,9 +297,6 @@ instance (Integral w, Show w) => Show (BS w (Right (n :: Nat))) where
 instance (Integral w, Show w, Show (BS w (BSN w n))) => Show (BS w (Left (n :: Nat))) where
   showsPrec d (BSCons w ws) = showHex w . (',' :) . showsPrec d ws
 
--- rotateL :: BS n -> Int -> w -> w -> BS n
--- rotateR :: BS n -> Int -> w -> w -> BS n
-
 shiftLCarry :: forall a. (Bits a, Integral a, KnownNat (WordWidth a)) => a -> Int -> (a, a)
 shiftLCarry word n =
   let carryOffset = (wordWidth @Int @a) - n
@@ -356,10 +323,23 @@ instance (Bits w, BitSet w n, Eq (BS w n)) => Bits (BS w n) where
   bitSize _ = (bitsetWidth @w @n)
   bitSizeMaybe _ = Just (bitsetWidth @w @n)
   isSigned = const False
-  rotate = undefined
   testBit = bsTestBit
   bit = singleBit
   popCount = bsPopCount
+
+  rotateL bs i =
+    let n = bitsetWidth @w @n
+        j = i `mod` n
+        lbs = bs `shiftL` j
+        rbs = bs `shiftR` (n - j)
+     in lbs .|. rbs
+
+  rotateR bs i =
+    let n = bitsetWidth @w @n
+        j = i `mod` n
+        rbs = bs `shiftR` j
+        lbs = bs `shiftL` (n - j)
+     in rbs .|. lbs
 
 type BitSetW w (n :: Nat) = BS w (FirstLength' w n)
 
