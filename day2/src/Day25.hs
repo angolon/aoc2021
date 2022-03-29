@@ -53,7 +53,7 @@ import Data.WideWord.Word256
 import Debug.Trace
 import GHC.Exts (Constraint)
 import GHC.TypeLits
-import GHC.Word (Word8)
+import GHC.Word (Word64, Word8)
 import Lib (MyParser, parseInt, parseStdin)
 import Text.Parsec
 import Text.Parsec.Char
@@ -70,15 +70,19 @@ data Lane = Lane {_occupied :: WordT}
 -- bloop :: BS @(BSN 512)
 -- bloop = BSCons 0xFF
 
-blah =
-  let xs = empty @(BSN 512)
-      ys = empty @(BSN 512)
-   in xs == ys
+-- blah =
+--   let xs = empty @(BSN Word64 512)
+--       ys = empty @(BSN Word64 512)
+--    in xs == ys
+
+blah :: BS Word64 (Left 257)
+blah = bit 275 :: BS Word64 (Left 257)
 
 cucumberDance :: IO ()
 cucumberDance = do
-  print $ natVal (Proxy :: Proxy NBits)
-  print $ natVal (Proxy :: Proxy NWords)
-  print . showBS $ empty @(BSN 257)
+  -- print $ empty @(BitSet Word64 257)
+  print $ (empty :: BS Word64 (BSN Word64 257))
+  print $ bitsetWidth @Word64 @(Left 257)
+  print blah
 
 -- print . showBS $ BSCons @(BSN 512) 0xFFF $ BSEnd 0xFF

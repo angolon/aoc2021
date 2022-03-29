@@ -31,6 +31,7 @@ import Data.Bits
 import Data.Either (either)
 import Data.Foldable
 import Data.Function (on)
+import Data.Kind
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -48,127 +49,150 @@ import Data.Set (Set (..), union)
 import qualified Data.Set as Set
 import Data.Type.Equality
 import qualified Data.Vector as V
-import Data.WideWord.Word256
 import Debug.Trace
 import GHC.Exts (Constraint)
 import GHC.TypeLits
-import GHC.Word (Word8)
+import GHC.Word (Word16, Word32, Word64, Word8)
 import Lib (MyParser, parseInt, parseStdin)
+import Numeric (showHex)
 import Text.Parsec
 import Text.Parsec.Char
 import Text.Show.Functions
 
-type WordT = Word256
+type WordT = Word64
 
 type Width = 139
 
 type Height = 137
 
-type WordWidth = 256
+type family WordWidth (a :: Type) :: Nat where
+  WordWidth Word8 = 8
+  WordWidth Word16 = 16
+  WordWidth Word32 = 32
+  WordWidth Word64 = 64
 
 type NBits = Width * Height
 
-type Remainder = Mod NBits WordWidth
+type Remainder w n = Mod n (WordWidth w)
 
-type Con = CmpNat Remainder 0
+type Cmp w n = CmpNat (Remainder w n) 0
 
 type family Extra a where
   Extra 'GT = 1
   Extra _ = 0
 
-type NWords = (Div NBits WordWidth) + (Extra Con)
+type NWords w n = (Div n (WordWidth w)) + (Extra (Cmp w n))
 
-type CmpWidth n = CmpNat n WordWidth
+type CmpRemainder w n = CmpNat (Remainder w n) 0
 
-type family MoreWords cmp n where
-  MoreWords 'GT n = Left (n - 256)
-  MoreWords _ _ = Right ()
+type CmpWidth w n = CmpNat n (WordWidth w)
 
-type BSN (n :: Nat) = MoreWords (CmpWidth n) n
+type family MoreWords w cmpRemainder cmpWidth n where
+  MoreWords w 'GT 'GT n = Left (n - (Remainder w n))
+  MoreWords w 'EQ 'GT n = Left (n - (WordWidth w))
+  MoreWords _ 'EQ 'EQ n = Right n
 
-class BitSet n where
-  data BS n
+type BSN w (n :: Nat) = MoreWords w (CmpRemainder w n) (CmpWidth w n) n
 
-  showBS :: BS n -> String
+class BitSet w n where
+  data BS w n
 
-  empty :: BS n
+  -- showBS :: BS w n -> String
 
-type BitSetN (n :: Nat) = BitSet (BSN n)
+  empty :: BS w n
 
-instance BitSet (Right ()) where
-  data BS (Right ()) = BSEnd WordT
+  bitsetWidth :: Integral a => a
 
-  showBS (BSEnd bits) = showHexWord256 bits
+type BitSetN w (n :: Nat) = BitSet w (BSN w n)
 
-  empty = BSEnd 0
+wordWidth :: forall a w. (Integral a, KnownNat (WordWidth w)) => a
+wordWidth = fromInteger $ natVal (Proxy :: Proxy (WordWidth w))
 
-instance (BitSetN n) => BitSet (Left (n :: Nat)) where
-  data BS (Left n) = BSCons WordT (BS (BSN n))
-  showBS (BSCons bits words) = showHexWord256 bits ++ ", " ++ showBS words
-  empty = BSCons 0 empty
+instance (Bits w, KnownNat n) => BitSet (w :: Type) (Right (n :: Nat)) where
+  data BS w (Right n) = BSEnd w
 
-instance Eq (BS (Right ())) where
+  bitsetWidth = fromInteger $ natVal (Proxy :: Proxy n)
+
+  empty = BSEnd zeroBits
+
+instance (Bits w, KnownNat n, BitSetN w n) => BitSet (w :: Type) (Left (n :: Nat)) where
+  data BS w (Left n) = BSCons w (BS w (BSN w n))
+
+  bitsetWidth = fromInteger $ natVal (Proxy :: Proxy n)
+
+  empty = BSCons zeroBits empty
+
+instance (Eq w) => Eq (BS w (Right (n :: Nat))) where
   (BSEnd as) == (BSEnd bs) = as == bs
 
-instance (Eq (BS (BSN m))) => Eq (BS (Left (m :: Nat))) where
+instance (Eq w, Eq (BS w (BSN w m))) => Eq (BS w (Left (m :: Nat))) where
   (BSCons a as) == (BSCons b bs) = a == b && (as == bs)
 
-class (BitSet n) => ShiftHelper n where
+instance (Integral w, Show w) => Show (BS w (Right (n :: Nat))) where
+  showsPrec _ (BSEnd w) = showHex w
+
+instance (Integral w, Show w, Show (BS w (BSN w n))) => Show (BS w (Left (n :: Nat))) where
+  showsPrec d (BSCons w ws) = showHex w . showsPrec d ws
+
+class (BitSet w n) => ShiftHelper w n where
   -- The word at this index
-  word :: BS n -> WordT
+  word :: BS w n -> w
 
   -- The word at the n'th index
   -- All zeros if the index is past the end of the bitset
-  wordN :: Int -> BS n -> WordT
+  wordN :: Int -> BS w n -> w
 
   -- Leftmost word in bitset
-  wordL :: BS n -> WordT
+  wordL :: BS w n -> w
 
   -- Rightmost word in bitset
-  wordR :: BS n -> WordT
+  wordR :: BS w n -> w
 
-  setWordN :: Int -> WordT -> BS n -> BS n
+  setWordN :: Int -> w -> BS w n -> BS w n
 
-  shiftRWithCarry :: BS n -> Int -> WordT -> BS n
-  shiftRWholeWords :: BS n -> Int -> BS n
-  shiftRInit :: BS n -> Int -> BS n
+  shiftRWithCarry :: BS w n -> Int -> w -> BS w n
+  shiftRWholeWords :: BS w n -> Int -> BS w n
+  shiftRInit :: BS w n -> Int -> BS w n
 
   -- (Carry, result)
-  shiftLWithCarry :: BS n -> Int -> (WordT, BS n)
-  shiftLWholeWords :: BS n -> Int -> BS n
-  shiftLInit :: BS n -> Int -> BS n
+  shiftLWithCarry :: BS w n -> Int -> (w, BS w n)
+  shiftLWholeWords :: BS w n -> Int -> BS w n
+  shiftLInit :: BS w n -> Int -> BS w n
 
-  mapWords :: (WordT -> WordT) -> BS n -> BS n
-  zipWordsWith :: (WordT -> WordT -> WordT) -> BS n -> BS n -> BS n
+  mapWords :: (w -> w) -> BS w n -> BS w n
+  zipWordsWith :: (w -> w -> w) -> BS w n -> BS w n -> BS w n
 
--- rotateL :: BS n -> Int -> WordT -> WordT -> BS n
--- rotateR :: BS n -> Int -> WordT -> WordT -> BS n
+-- rotateL :: BS n -> Int -> w -> w -> BS n
+-- rotateR :: BS n -> Int -> w -> w -> BS n
 
-type ShiftHelperN (n :: Nat) = ShiftHelper (BSN n)
+type ShiftHelperN w (n :: Nat) = ShiftHelper w (BSN w n)
 
-wordWidth :: (Integral a) => a
-wordWidth = fromInteger $ natVal (Proxy :: Proxy WordWidth)
-
-bitsetWidth :: (Integral a) => a
-bitsetWidth = fromInteger $ natVal (Proxy :: Proxy NBits)
-
-shiftLCarry :: WordT -> Int -> (WordT, WordT)
+shiftLCarry :: forall a. (Bits a, Integral a, KnownNat (WordWidth a)) => a -> Int -> (a, a)
 shiftLCarry word n =
-  let carryOffset = wordWidth - n
+  let carryOffset = (wordWidth @Int @a) - n
       mask = ((1 `shiftL` n) - 1) `shiftL` carryOffset
       carry = (word .&. mask) `shiftR` carryOffset
       word' = word `shiftL` n
    in (carry, word')
 
-shiftRCarry :: WordT -> Int -> (WordT, WordT)
+shiftRCarry :: forall a. (Bits a, Integral a, KnownNat (WordWidth a)) => a -> Int -> (a, a)
 shiftRCarry word n =
-  let carryOffset = wordWidth - n
+  let carryOffset = (wordWidth @Int @a) - n
       mask = (1 `shiftL` n) - 1
       carry = (word .&. mask) `shiftL` carryOffset
       word' = word `shiftR` n
    in (word', carry)
 
-instance (BitSetN n, ShiftHelperN n) => ShiftHelper (Left (n :: Nat)) where
+instance
+  ( Bits w,
+    Integral w,
+    KnownNat n,
+    KnownNat (WordWidth w),
+    BitSetN w n,
+    ShiftHelperN w n
+  ) =>
+  ShiftHelper w (Left (n :: Nat))
+  where
   word (BSCons word _) = word
 
   wordN 0 bs = word bs
@@ -184,12 +208,12 @@ instance (BitSetN n, ShiftHelperN n) => ShiftHelper (Left (n :: Nat)) where
   shiftLInit bs@(BSCons w ws) n
     | n < 0 = throw Overflow
     | n == 0 = bs
-    | n >= bitsetWidth = empty
-    | n >= wordWidth =
-      let (nWords, nBits) = n `quotRem` wordWidth
+    | n >= bitsetWidth @w @(Left n) = empty
+    | n >= (wordWidth @Int @w) =
+      let (nWords, nBits) = n `quotRem` (wordWidth @Int @w)
           bs' = shiftLWholeWords bs nWords
        in shiftLInit bs' nBits
-    | n < wordWidth =
+    | n < (wordWidth @Int @w) =
       let (carry, ws') = shiftLWithCarry ws n
           w' = (w `shiftL` n) .|. carry
        in BSCons w' ws'
@@ -210,12 +234,12 @@ instance (BitSetN n, ShiftHelperN n) => ShiftHelper (Left (n :: Nat)) where
   shiftRInit bs@(BSCons w ws) n
     | n < 0 = throw Overflow
     | n == 0 = bs
-    | n >= bitsetWidth = empty
-    | n >= wordWidth =
-      let (nWords, nBits) = n `quotRem` wordWidth
+    | n >= (bitsetWidth @w @(Left n)) = empty
+    | n >= (wordWidth @Int @w) =
+      let (nWords, nBits) = n `quotRem` (wordWidth @Int @w)
           bs' = shiftRWholeWords bs nWords
        in shiftRInit bs' nBits
-    | n < wordWidth = shiftRWithCarry bs n zeroBits
+    | n < (wordWidth @Int @w) = shiftRWithCarry bs n zeroBits
 
   shiftRWholeWords bs 0 = bs
   shiftRWholeWords bs@(BSCons w ws) n =
@@ -233,7 +257,14 @@ instance (BitSetN n, ShiftHelperN n) => ShiftHelper (Left (n :: Nat)) where
   mapWords f (BSCons w ws) = BSCons (f w) $ mapWords f ws
   zipWordsWith op (BSCons w ws) (BSCons v vs) = BSCons (w `op` v) $ zipWordsWith op ws vs
 
-instance ShiftHelper (Right ()) where
+instance
+  ( Bits w,
+    Integral w,
+    KnownNat n,
+    KnownNat (WordWidth w)
+  ) =>
+  ShiftHelper w (Right (n :: Nat))
+  where
   word (BSEnd w) = w
 
   wordN 0 = word
@@ -269,15 +300,15 @@ instance ShiftHelper (Right ()) where
 
   shiftRInit (BSEnd w) n = BSEnd $ w `shiftR` n
 
-instance (Eq (BS n), ShiftHelper n) => Bits (BS n) where
+instance (Bits w, Eq (BS w n), ShiftHelper w n) => Bits (BS w n) where
   (.&.) = zipWordsWith (.&.)
   (.|.) = zipWordsWith (.|.)
   xor = zipWordsWith xor
   complement = mapWords complement
   shiftL = shiftLInit
   shiftR = shiftRInit
-  bitSize _ = bitsetWidth
-  bitSizeMaybe _ = Just bitsetWidth
+  bitSize _ = (bitsetWidth @w @n)
+  bitSizeMaybe _ = Just (bitsetWidth @w @n)
   isSigned = const False
   rotate = undefined
   testBit = undefined
