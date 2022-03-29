@@ -78,11 +78,18 @@ type family NextLength w n cmpRemainder cmpWidth where
 
 type NextLength' w n = NextLength w n (CmpRemainder w n) (CmpWidth w n)
 
-type family MoreWords w n cmp where
-  MoreWords w n 'GT = Left n
-  MoreWords _ n 'EQ = Right n
+type family MoreWords n cmp where
+  MoreWords n 'GT = Left n
+  MoreWords n 'EQ = Right n
 
-type MoreWords' w n = MoreWords w (NextLength' w n) (CmpWidth w (NextLength' w n))
+type MoreWords' w n = MoreWords (NextLength' w n) (CmpWidth w (NextLength' w n))
+
+type family FirstLength n cmp where
+  FirstLength n 'GT = Left n
+  FirstLength n 'EQ = Right n
+  FirstLength n 'LT = Right n
+
+type FirstLength' w n = FirstLength n (CmpWidth w n)
 
 type BSN w (n :: Nat) = MoreWords' w n
 
@@ -95,6 +102,7 @@ class BitSet w n where
   upperBitIndex :: Integral a => a
   lowerBitIndex :: Integral a => a
   singleBit :: Int -> BS w n
+  bsTestBit :: BS w n -> Int -> Bool
 
 type BitSetN w (n :: Nat) = BitSet w (BSN w n)
 
@@ -115,6 +123,10 @@ instance (Bits w, KnownNat n) => BitSet (w :: Type) (Right (n :: Nat)) where
     | 0 <= i && i < (upperBitIndex @w @(Right n)) = BSEnd $ bit i
     | otherwise = throw Overflow
 
+  bsTestBit (BSEnd w) i
+    | 0 <= i && i < (upperBitIndex @w @(Right n)) = testBit w i
+    | otherwise = throw Overflow
+
 instance (Bits w, KnownNat n, BitSetN w n) => BitSet (w :: Type) (Left (n :: Nat)) where
   data BS w (Left n) = BSCons w (BS w (BSN w n))
 
@@ -131,6 +143,13 @@ instance (Bits w, KnownNat n, BitSetN w n) => BitSet (w :: Type) (Left (n :: Nat
     | otherwise =
       let i' = i - (lowerBitIndex @w @(Left n))
        in BSCons (bit i') empty
+
+  bsTestBit (BSCons w ws) i
+    | i >= upperBitIndex @w @(Left n) = throw Overflow
+    | i < lowerBitIndex @w @(Left n) = bsTestBit ws i
+    | otherwise =
+      let i' = i - (lowerBitIndex @w @(Left n))
+       in testBit w i'
 
 instance (Eq w) => Eq (BS w (Right (n :: Nat))) where
   (BSEnd as) == (BSEnd bs) = as == bs
@@ -321,6 +340,10 @@ instance (Bits w, Eq (BS w n), ShiftHelper w n) => Bits (BS w n) where
   bitSizeMaybe _ = Just (bitsetWidth @w @n)
   isSigned = const False
   rotate = undefined
-  testBit = undefined
+  testBit = bsTestBit
   bit = singleBit
   popCount = undefined
+
+type BitSetW w (n :: Nat) = BS w (FirstLength' w n)
+
+type BitSet64 (n :: Nat) = BS Word64 (FirstLength' Word64 n)
