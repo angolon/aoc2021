@@ -117,20 +117,21 @@ bitSetProps groupName =
       shiftR0 :: BitSetW w n -> IO ()
       shiftR0 bs = bs `shiftR` 0 `shouldBe` bs
 
+      -- TODO: it'd be "nicer" get the masks for these test using arithmetic, rather than relying
+      -- on the `shift` operation to get the mask bits.
       shiftLR :: BitSetW w n -> BitIndex w (FirstLength' w n) -> Property
       shiftLR bs (BitIndex i) =
         let offset = n - i
             mask :: BitSetW w n
-            mask = foldl' (\x _ -> (`setBit` 0) . (`shiftL` 1) $ x) zeroBits [1 .. offset]
+            mask = (`shiftR` i) . complement $ zeroBits
             masked = bs .&. mask
             shifted = (bs `shiftL` i) `shiftR` i
          in i < n ==> shifted `shouldBe` masked
 
       shiftRL :: BitSetW w n -> BitIndex w (FirstLength' w n) -> Property
       shiftRL bs (BitIndex i) =
-        let maskComplement :: BitSetW w n
-            maskComplement = foldl' (\x _ -> (`setBit` 0) . (`shiftL` 1) $ x) zeroBits [1 .. i]
-            mask = complement maskComplement
+        let mask :: BitSetW w n
+            mask = (`shiftL` i) . complement $ zeroBits
             masked = bs .&. mask
             shifted = (bs `shiftR` i) `shiftL` i
          in i < n ==> shifted `shouldBe` masked
