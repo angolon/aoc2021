@@ -41,8 +41,7 @@ unit_singleBit =
 
 zeroBitsP ::
   forall b w n.
-  ( ShiftHelper w (FirstLength' w n),
-    Show b,
+  ( Show b,
     Eq b,
     Bits w,
     KnownNat n,

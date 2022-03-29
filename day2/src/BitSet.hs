@@ -105,70 +105,6 @@ class BitSet w n where
   bsTestBit :: BS w n -> Int -> Bool
   bsPopCount :: BS w n -> Int
 
-type BitSetN w (n :: Nat) = BitSet w (BSN w n)
-
-wordWidth :: forall a w. (Integral a, KnownNat (WordWidth w)) => a
-wordWidth = fromInteger $ natVal (Proxy :: Proxy (WordWidth w))
-
-instance (Bits w, KnownNat n) => BitSet (w :: Type) (Right (n :: Nat)) where
-  data BS w (Right n) = BSEnd w
-
-  bitsetWidth = fromInteger $ natVal (Proxy :: Proxy n)
-
-  empty = BSEnd zeroBits
-
-  upperBitIndex = fromIntegral (natVal (Proxy :: Proxy (n)))
-  lowerBitIndex = 0
-
-  singleBit i
-    | 0 <= i && i < (upperBitIndex @w @(Right n)) = BSEnd $ bit i
-    | otherwise = throw Overflow
-
-  bsTestBit (BSEnd w) i
-    | 0 <= i && i < (upperBitIndex @w @(Right n)) = testBit w i
-    | otherwise = throw Overflow
-
-  bsPopCount (BSEnd w) = popCount w
-
-instance (Bits w, KnownNat n, BitSetN w n) => BitSet (w :: Type) (Left (n :: Nat)) where
-  data BS w (Left n) = BSCons w (BS w (BSN w n))
-
-  bitsetWidth = fromInteger $ natVal (Proxy :: Proxy n)
-
-  upperBitIndex = fromIntegral (natVal (Proxy :: Proxy (n)))
-  lowerBitIndex = upperBitIndex @w @(BSN w n)
-
-  empty = BSCons zeroBits empty
-
-  singleBit i
-    | i >= upperBitIndex @w @(Left n) = throw Overflow
-    | i < lowerBitIndex @w @(Left n) = BSCons zeroBits $ singleBit i
-    | otherwise =
-      let i' = i - (lowerBitIndex @w @(Left n))
-       in BSCons (bit i') empty
-
-  bsTestBit (BSCons w ws) i
-    | i >= upperBitIndex @w @(Left n) = throw Overflow
-    | i < lowerBitIndex @w @(Left n) = bsTestBit ws i
-    | otherwise =
-      let i' = i - (lowerBitIndex @w @(Left n))
-       in testBit w i'
-
-  bsPopCount (BSCons w ws) = popCount w + bsPopCount ws
-
-instance (Eq w) => Eq (BS w (Right (n :: Nat))) where
-  (BSEnd as) == (BSEnd bs) = as == bs
-
-instance (Eq w, Eq (BS w (BSN w m))) => Eq (BS w (Left (m :: Nat))) where
-  (BSCons a as) == (BSCons b bs) = a == b && (as == bs)
-
-instance (Integral w, Show w) => Show (BS w (Right (n :: Nat))) where
-  showsPrec _ (BSEnd w) = showHex w
-
-instance (Integral w, Show w, Show (BS w (BSN w n))) => Show (BS w (Left (n :: Nat))) where
-  showsPrec d (BSCons w ws) = showHex w . showsPrec d ws
-
-class (BitSet w n) => ShiftHelper w n where
   -- The word at this index
   word :: BS w n -> w
 
@@ -196,37 +132,107 @@ class (BitSet w n) => ShiftHelper w n where
   mapWords :: (w -> w) -> BS w n -> BS w n
   zipWordsWith :: (w -> w -> w) -> BS w n -> BS w n -> BS w n
 
--- rotateL :: BS n -> Int -> w -> w -> BS n
--- rotateR :: BS n -> Int -> w -> w -> BS n
+type BitSetN w (n :: Nat) = BitSet w (BSN w n)
 
-type ShiftHelperN w (n :: Nat) = ShiftHelper w (BSN w n)
-
-shiftLCarry :: forall a. (Bits a, Integral a, KnownNat (WordWidth a)) => a -> Int -> (a, a)
-shiftLCarry word n =
-  let carryOffset = (wordWidth @Int @a) - n
-      mask = ((1 `shiftL` n) - 1) `shiftL` carryOffset
-      carry = (word .&. mask) `shiftR` carryOffset
-      word' = word `shiftL` n
-   in (carry, word')
-
-shiftRCarry :: forall a. (Bits a, Integral a, KnownNat (WordWidth a)) => a -> Int -> (a, a)
-shiftRCarry word n =
-  let carryOffset = (wordWidth @Int @a) - n
-      mask = (1 `shiftL` n) - 1
-      carry = (word .&. mask) `shiftL` carryOffset
-      word' = word `shiftR` n
-   in (word', carry)
+wordWidth :: forall a w. (Integral a, KnownNat (WordWidth w)) => a
+wordWidth = fromInteger $ natVal (Proxy :: Proxy (WordWidth w))
 
 instance
   ( Bits w,
     Integral w,
     KnownNat n,
-    KnownNat (WordWidth w),
-    BitSetN w n,
-    ShiftHelperN w n
+    KnownNat (WordWidth w)
   ) =>
-  ShiftHelper w (Left (n :: Nat))
+  BitSet (w :: Type) (Right (n :: Nat))
   where
+  data BS w (Right n) = BSEnd w
+
+  bitsetWidth = fromInteger $ natVal (Proxy :: Proxy n)
+
+  empty = BSEnd zeroBits
+
+  upperBitIndex = fromIntegral (natVal (Proxy :: Proxy (n)))
+  lowerBitIndex = 0
+
+  singleBit i
+    | 0 <= i && i < (upperBitIndex @w @(Right n)) = BSEnd $ bit i
+    | otherwise = throw Overflow
+
+  bsTestBit (BSEnd w) i
+    | 0 <= i && i < (upperBitIndex @w @(Right n)) = testBit w i
+    | otherwise = throw Overflow
+
+  bsPopCount (BSEnd w) = popCount w
+
+  word (BSEnd w) = w
+
+  wordN 0 = word
+  wordN _ = const zeroBits
+
+  setWordN 0 w = const $ BSEnd w
+  setWordN _ _ = id
+
+  wordL = word
+  wordR = word
+
+  shiftLWholeWords bs 0 = bs
+  shiftLWholeWords _ _ = BSEnd zeroBits
+
+  shiftLWithCarry (BSEnd w) n =
+    let (carryOut, w') = shiftLCarry w n
+     in (carryOut,) $ BSEnd w'
+
+  shiftRWholeWords bs 0 = bs
+  shiftRWholeWords _ _ = BSEnd zeroBits
+
+  shiftRWithCarry (BSEnd w) n carryIn =
+    let w' = w `shiftR` n
+        w'' = carryIn .|. w'
+     in BSEnd w''
+
+  mapWords f (BSEnd w) = BSEnd . f $ w
+  zipWordsWith op (BSEnd w) (BSEnd v) = BSEnd $ w `op` v
+
+  -- If BSEnd contains the first and only word, we can defer to the vanilla
+  -- `shiftL` and `shiftR` operations.
+  shiftLInit (BSEnd w) n = BSEnd $ w `shiftL` n
+
+  shiftRInit (BSEnd w) n = BSEnd $ w `shiftR` n
+
+instance
+  ( Bits w,
+    Integral w,
+    KnownNat n,
+    BitSetN w n,
+    KnownNat (WordWidth w)
+  ) =>
+  BitSet (w :: Type) (Left (n :: Nat))
+  where
+  data BS w (Left n) = BSCons w (BS w (BSN w n))
+
+  bitsetWidth = fromInteger $ natVal (Proxy :: Proxy n)
+
+  upperBitIndex = fromIntegral (natVal (Proxy :: Proxy (n)))
+  lowerBitIndex = upperBitIndex @w @(BSN w n)
+
+  empty = BSCons zeroBits empty
+
+  singleBit i
+    | i >= upperBitIndex @w @(Left n) = throw Overflow
+    | i < lowerBitIndex @w @(Left n) = BSCons zeroBits $ singleBit i
+    | otherwise =
+      let i' = i - (lowerBitIndex @w @(Left n))
+       in BSCons (bit i') empty
+
+  bsTestBit (BSCons w ws) i
+    | i >= upperBitIndex @w @(Left n) = throw Overflow
+    | i < lowerBitIndex @w @(Left n) = bsTestBit ws i
+    | otherwise =
+      let i' = i - (lowerBitIndex @w @(Left n))
+       in testBit w i'
+
+  bsPopCount (BSCons w ws) = popCount w + bsPopCount ws
+
   word (BSCons word _) = word
 
   wordN 0 bs = word bs
@@ -291,50 +297,38 @@ instance
   mapWords f (BSCons w ws) = BSCons (f w) $ mapWords f ws
   zipWordsWith op (BSCons w ws) (BSCons v vs) = BSCons (w `op` v) $ zipWordsWith op ws vs
 
-instance
-  ( Bits w,
-    Integral w,
-    KnownNat n,
-    KnownNat (WordWidth w)
-  ) =>
-  ShiftHelper w (Right (n :: Nat))
-  where
-  word (BSEnd w) = w
+instance (Eq w) => Eq (BS w (Right (n :: Nat))) where
+  (BSEnd as) == (BSEnd bs) = as == bs
 
-  wordN 0 = word
-  wordN _ = const zeroBits
+instance (Eq w, Eq (BS w (BSN w m))) => Eq (BS w (Left (m :: Nat))) where
+  (BSCons a as) == (BSCons b bs) = a == b && (as == bs)
 
-  setWordN 0 w = const $ BSEnd w
-  setWordN _ _ = id
+instance (Integral w, Show w) => Show (BS w (Right (n :: Nat))) where
+  showsPrec _ (BSEnd w) = showHex w
 
-  wordL = word
-  wordR = word
+instance (Integral w, Show w, Show (BS w (BSN w n))) => Show (BS w (Left (n :: Nat))) where
+  showsPrec d (BSCons w ws) = showHex w . showsPrec d ws
 
-  shiftLWholeWords bs 0 = bs
-  shiftLWholeWords _ _ = BSEnd zeroBits
+-- rotateL :: BS n -> Int -> w -> w -> BS n
+-- rotateR :: BS n -> Int -> w -> w -> BS n
 
-  shiftLWithCarry (BSEnd w) n =
-    let (carryOut, w') = shiftLCarry w n
-     in (carryOut,) $ BSEnd w'
+shiftLCarry :: forall a. (Bits a, Integral a, KnownNat (WordWidth a)) => a -> Int -> (a, a)
+shiftLCarry word n =
+  let carryOffset = (wordWidth @Int @a) - n
+      mask = ((1 `shiftL` n) - 1) `shiftL` carryOffset
+      carry = (word .&. mask) `shiftR` carryOffset
+      word' = word `shiftL` n
+   in (carry, word')
 
-  shiftRWholeWords bs 0 = bs
-  shiftRWholeWords _ _ = BSEnd zeroBits
+shiftRCarry :: forall a. (Bits a, Integral a, KnownNat (WordWidth a)) => a -> Int -> (a, a)
+shiftRCarry word n =
+  let carryOffset = (wordWidth @Int @a) - n
+      mask = (1 `shiftL` n) - 1
+      carry = (word .&. mask) `shiftL` carryOffset
+      word' = word `shiftR` n
+   in (word', carry)
 
-  shiftRWithCarry (BSEnd w) n carryIn =
-    let w' = w `shiftR` n
-        w'' = carryIn .|. w'
-     in BSEnd w''
-
-  mapWords f (BSEnd w) = BSEnd . f $ w
-  zipWordsWith op (BSEnd w) (BSEnd v) = BSEnd $ w `op` v
-
-  -- If BSEnd contains the first and only word, we can defer to the vanilla
-  -- `shiftL` and `shiftR` operations.
-  shiftLInit (BSEnd w) n = BSEnd $ w `shiftL` n
-
-  shiftRInit (BSEnd w) n = BSEnd $ w `shiftR` n
-
-instance (Bits w, Eq (BS w n), ShiftHelper w n) => Bits (BS w n) where
+instance (Bits w, BitSet w n, Eq (BS w n)) => Bits (BS w n) where
   (.&.) = zipWordsWith (.&.)
   (.|.) = zipWordsWith (.|.)
   xor = zipWordsWith xor
