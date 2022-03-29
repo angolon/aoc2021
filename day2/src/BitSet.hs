@@ -208,7 +208,7 @@ instance
 
   -- If BSEnd contains the first and only word, we can defer to the vanilla
   -- `shiftL` and `shiftR` operations.
-  shiftLInit (BSEnd w) n = BSEnd $ w `shiftL` n
+  shiftLInit (BSEnd w) n = BSEnd . (.&. (wordMask @w @(Right n))) $ w `shiftL` n
 
   shiftRInit (BSEnd w) n = BSEnd $ w `shiftR` n
 
@@ -266,11 +266,12 @@ instance
     | n >= bitsetWidth @w @(Left n) = empty
     | n >= (wordWidth @Int @w) =
       let (nWords, nBits) = n `quotRem` (wordWidth @Int @w)
-          bs' = shiftLWholeWords bs nWords
-       in shiftLInit bs' nBits
+          (BSCons w' ws') = shiftLWholeWords bs nWords
+          w'' = (wordMask @w @(Left n)) .&. w'
+       in shiftLInit (BSCons w'' ws') nBits
     | n < (wordWidth @Int @w) =
       let (carry, ws') = shiftLWithCarry ws n
-          w' = (w `shiftL` n) .|. carry
+          w' = ((w `shiftL` n) .|. carry) .&. (wordMask @w @(Left n))
        in BSCons w' ws'
 
   shiftLWholeWords bs 0 = bs
@@ -324,7 +325,7 @@ instance (Integral w, Show w) => Show (BS w (Right (n :: Nat))) where
   showsPrec _ (BSEnd w) = showHex w
 
 instance (Integral w, Show w, Show (BS w (BSN w n))) => Show (BS w (Left (n :: Nat))) where
-  showsPrec d (BSCons w ws) = showHex w . showsPrec d ws
+  showsPrec d (BSCons w ws) = showHex w . (',' :) . showsPrec d ws
 
 -- rotateL :: BS n -> Int -> w -> w -> BS n
 -- rotateR :: BS n -> Int -> w -> w -> BS n
