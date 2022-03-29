@@ -103,6 +103,7 @@ class BitSet w n where
   lowerBitIndex :: Integral a => a
   singleBit :: Int -> BS w n
   bsTestBit :: BS w n -> Int -> Bool
+  bsPopCount :: BS w n -> Int
 
 type BitSetN w (n :: Nat) = BitSet w (BSN w n)
 
@@ -127,6 +128,8 @@ instance (Bits w, KnownNat n) => BitSet (w :: Type) (Right (n :: Nat)) where
     | 0 <= i && i < (upperBitIndex @w @(Right n)) = testBit w i
     | otherwise = throw Overflow
 
+  bsPopCount (BSEnd w) = popCount w
+
 instance (Bits w, KnownNat n, BitSetN w n) => BitSet (w :: Type) (Left (n :: Nat)) where
   data BS w (Left n) = BSCons w (BS w (BSN w n))
 
@@ -150,6 +153,8 @@ instance (Bits w, KnownNat n, BitSetN w n) => BitSet (w :: Type) (Left (n :: Nat
     | otherwise =
       let i' = i - (lowerBitIndex @w @(Left n))
        in testBit w i'
+
+  bsPopCount (BSCons w ws) = popCount w + bsPopCount ws
 
 instance (Eq w) => Eq (BS w (Right (n :: Nat))) where
   (BSEnd as) == (BSEnd bs) = as == bs
@@ -342,7 +347,7 @@ instance (Bits w, Eq (BS w n), ShiftHelper w n) => Bits (BS w n) where
   rotate = undefined
   testBit = bsTestBit
   bit = singleBit
-  popCount = undefined
+  popCount = bsPopCount
 
 type BitSetW w (n :: Nat) = BS w (FirstLength' w n)
 
