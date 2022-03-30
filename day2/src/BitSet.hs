@@ -199,6 +199,8 @@ instance
   shiftRInit (BSEnd w) n = BSEnd $ w `shiftR` n
   {-# INLINE shiftRInit #-}
 
+type HackL (a :: Nat) = Left @Nat @() a
+
 instance
   ( Bits w,
     Integral w,
@@ -239,6 +241,9 @@ instance
 
   bsPopCount (BSCons w ws) = popCount w + bsPopCount ws
   {-# INLINE bsPopCount #-}
+  {-# SPECIALISE bsPopCount :: BS Word64 (Left 1903) -> Int #-}
+  -- {-# SPECIALISE bsPopCount :: (BitSetN Word64 1903, KnownNat (WordWidth Word64)) => BS Word64 (Left 1903) -> Int #-}
+  -- {-# SPECIALISE bsPopCount :: (BitSetN Word64 n, KnownNat n, KnownNat (WordWidth Word64)) => BS Word64 (Left n) -> Int #-}
 
   word (BSCons word _) = word
   {-# INLINE word #-}
@@ -270,6 +275,8 @@ instance
           w' = ((w `shiftL` n) .|. carry) .&. (wordMask @w @(Left n))
        in BSCons w' ws'
   {-# INLINE shiftLInit #-}
+  {-# SPECIALISE shiftLInit :: BS Word64 (HackL 1903) -> Int -> BS Word64 (HackL 1903)  #-}
+  -- {-# SPECIALISE shiftLInit :: (BitSetN Word64 n, KnownNat n, KnownNat (WordWidth Word64)) => BS Word64 (HackL n) -> Int -> BS Word64 (HackL n)  #-}
 
   shiftLWholeWords bs 0 = bs
   shiftLWholeWords bs@(BSCons w ws) n =
@@ -277,6 +284,35 @@ instance
         ws' = shiftLWholeWords ws n
      in BSCons w' ws'
   {-# INLINE shiftLWholeWords #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 128) -> Int -> BS Word64 (HackL 128)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 192) -> Int -> BS Word64 (HackL 192)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 256) -> Int -> BS Word64 (HackL 256)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 320) -> Int -> BS Word64 (HackL 320)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 384) -> Int -> BS Word64 (HackL 384)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 448) -> Int -> BS Word64 (HackL 448)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 512) -> Int -> BS Word64 (HackL 512)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 576) -> Int -> BS Word64 (HackL 576)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 640) -> Int -> BS Word64 (HackL 640)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 704) -> Int -> BS Word64 (HackL 704)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 768) -> Int -> BS Word64 (HackL 768)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 832) -> Int -> BS Word64 (HackL 832)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 896) -> Int -> BS Word64 (HackL 896)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 960) -> Int -> BS Word64 (HackL 960)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1024) -> Int -> BS Word64 (HackL 1024)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1088) -> Int -> BS Word64 (HackL 1088)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1152) -> Int -> BS Word64 (HackL 1152)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1216) -> Int -> BS Word64 (HackL 1216)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1280) -> Int -> BS Word64 (HackL 1280)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1344) -> Int -> BS Word64 (HackL 1344)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1408) -> Int -> BS Word64 (HackL 1408)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1472) -> Int -> BS Word64 (HackL 1472)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1536) -> Int -> BS Word64 (HackL 1536)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1600) -> Int -> BS Word64 (HackL 1600)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1664) -> Int -> BS Word64 (HackL 1664)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1728) -> Int -> BS Word64 (HackL 1728)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1792) -> Int -> BS Word64 (HackL 1792)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1856) -> Int -> BS Word64 (HackL 1856)  #-}
+  {-# SPECIALISE shiftLWholeWords :: BS Word64 (HackL 1903) -> Int -> BS Word64 (HackL 1903)  #-}
 
   shiftLWithCarry (BSCons w ws) n =
     let (carryOut, w') = shiftLCarry w n
@@ -285,6 +321,35 @@ instance
         cons = BSCons w'' ws'
      in (carryOut, cons)
   {-# INLINE shiftLWithCarry #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 128) -> Int -> (Word64, BS Word64 (HackL 128))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 192) -> Int -> (Word64, BS Word64 (HackL 192))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 256) -> Int -> (Word64, BS Word64 (HackL 256))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 320) -> Int -> (Word64, BS Word64 (HackL 320))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 384) -> Int -> (Word64, BS Word64 (HackL 384))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 448) -> Int -> (Word64, BS Word64 (HackL 448))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 512) -> Int -> (Word64, BS Word64 (HackL 512))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 576) -> Int -> (Word64, BS Word64 (HackL 576))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 640) -> Int -> (Word64, BS Word64 (HackL 640))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 704) -> Int -> (Word64, BS Word64 (HackL 704))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 768) -> Int -> (Word64, BS Word64 (HackL 768))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 832) -> Int -> (Word64, BS Word64 (HackL 832))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 896) -> Int -> (Word64, BS Word64 (HackL 896))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 960) -> Int -> (Word64, BS Word64 (HackL 960))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1024) -> Int -> (Word64, BS Word64 (HackL 1024))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1088) -> Int -> (Word64, BS Word64 (HackL 1088))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1152) -> Int -> (Word64, BS Word64 (HackL 1152))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1216) -> Int -> (Word64, BS Word64 (HackL 1216))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1280) -> Int -> (Word64, BS Word64 (HackL 1280))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1344) -> Int -> (Word64, BS Word64 (HackL 1344))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1408) -> Int -> (Word64, BS Word64 (HackL 1408))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1472) -> Int -> (Word64, BS Word64 (HackL 1472))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1536) -> Int -> (Word64, BS Word64 (HackL 1536))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1600) -> Int -> (Word64, BS Word64 (HackL 1600))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1664) -> Int -> (Word64, BS Word64 (HackL 1664))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1728) -> Int -> (Word64, BS Word64 (HackL 1728))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1792) -> Int -> (Word64, BS Word64 (HackL 1792))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1856) -> Int -> (Word64, BS Word64 (HackL 1856))  #-}
+  {-# SPECIALISE shiftLWithCarry :: BS Word64 (HackL 1903) -> Int -> (Word64, BS Word64 (HackL 1903))  #-}
 
   shiftRInit bs@(BSCons w ws) n
     | n < 0 = throw Overflow
@@ -296,6 +361,7 @@ instance
        in shiftRInit bs' nBits
     | n < (wordWidth @Int @w) = shiftRWithCarry bs n zeroBits
   {-# INLINE shiftRInit #-}
+  {-# SPECIALISE shiftRInit :: BS Word64 (HackL 1903) -> Int -> BS Word64 (HackL 1903)  #-}
 
   shiftRWholeWords bs 0 = bs
   shiftRWholeWords bs@(BSCons w ws) n =
@@ -304,6 +370,35 @@ instance
         w' = zeroBits
      in BSCons w' ws''
   {-# INLINE shiftRWholeWords #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 128) -> Int -> BS Word64 (HackL 128)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 192) -> Int -> BS Word64 (HackL 192)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 256) -> Int -> BS Word64 (HackL 256)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 320) -> Int -> BS Word64 (HackL 320)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 384) -> Int -> BS Word64 (HackL 384)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 448) -> Int -> BS Word64 (HackL 448)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 512) -> Int -> BS Word64 (HackL 512)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 576) -> Int -> BS Word64 (HackL 576)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 640) -> Int -> BS Word64 (HackL 640)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 704) -> Int -> BS Word64 (HackL 704)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 768) -> Int -> BS Word64 (HackL 768)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 832) -> Int -> BS Word64 (HackL 832)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 896) -> Int -> BS Word64 (HackL 896)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 960) -> Int -> BS Word64 (HackL 960)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1024) -> Int -> BS Word64 (HackL 1024)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1088) -> Int -> BS Word64 (HackL 1088)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1152) -> Int -> BS Word64 (HackL 1152)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1216) -> Int -> BS Word64 (HackL 1216)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1280) -> Int -> BS Word64 (HackL 1280)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1344) -> Int -> BS Word64 (HackL 1344)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1408) -> Int -> BS Word64 (HackL 1408)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1472) -> Int -> BS Word64 (HackL 1472)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1536) -> Int -> BS Word64 (HackL 1536)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1600) -> Int -> BS Word64 (HackL 1600)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1664) -> Int -> BS Word64 (HackL 1664)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1728) -> Int -> BS Word64 (HackL 1728)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1792) -> Int -> BS Word64 (HackL 1792)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1856) -> Int -> BS Word64 (HackL 1856)  #-}
+  {-# SPECIALISE shiftRWholeWords :: BS Word64 (HackL 1903) -> Int -> BS Word64 (HackL 1903)  #-}
 
   shiftRWithCarry bs@(BSCons w ws) n carryIn =
     let (w', carryOut) = shiftRCarry w n
@@ -311,14 +406,47 @@ instance
         ws' = shiftRWithCarry ws n carryOut
      in BSCons w'' ws'
   {-# INLINE shiftRWithCarry #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 128) -> Int -> Word64 -> BS Word64 (HackL 128)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 192) -> Int -> Word64 -> BS Word64 (HackL 192)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 256) -> Int -> Word64 -> BS Word64 (HackL 256)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 320) -> Int -> Word64 -> BS Word64 (HackL 320)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 384) -> Int -> Word64 -> BS Word64 (HackL 384)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 448) -> Int -> Word64 -> BS Word64 (HackL 448)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 512) -> Int -> Word64 -> BS Word64 (HackL 512)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 576) -> Int -> Word64 -> BS Word64 (HackL 576)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 640) -> Int -> Word64 -> BS Word64 (HackL 640)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 704) -> Int -> Word64 -> BS Word64 (HackL 704)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 768) -> Int -> Word64 -> BS Word64 (HackL 768)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 832) -> Int -> Word64 -> BS Word64 (HackL 832)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 896) -> Int -> Word64 -> BS Word64 (HackL 896)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 960) -> Int -> Word64 -> BS Word64 (HackL 960)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1024) -> Int -> Word64 -> BS Word64 (HackL 1024)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1088) -> Int -> Word64 -> BS Word64 (HackL 1088)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1152) -> Int -> Word64 -> BS Word64 (HackL 1152)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1216) -> Int -> Word64 -> BS Word64 (HackL 1216)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1280) -> Int -> Word64 -> BS Word64 (HackL 1280)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1344) -> Int -> Word64 -> BS Word64 (HackL 1344)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1408) -> Int -> Word64 -> BS Word64 (HackL 1408)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1472) -> Int -> Word64 -> BS Word64 (HackL 1472)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1536) -> Int -> Word64 -> BS Word64 (HackL 1536)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1600) -> Int -> Word64 -> BS Word64 (HackL 1600)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1664) -> Int -> Word64 -> BS Word64 (HackL 1664)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1728) -> Int -> Word64 -> BS Word64 (HackL 1728)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1792) -> Int -> Word64 -> BS Word64 (HackL 1792)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1856) -> Int -> Word64 -> BS Word64 (HackL 1856)  #-}
+  {-# SPECIALISE shiftRWithCarry :: BS Word64 (HackL 1903) -> Int -> Word64 -> BS Word64 (HackL 1903)  #-}
 
   mapWords f (BSCons w ws) = BSCons (f w .&. (wordMask @w @(Left n))) $ mapWords' f ws
   {-# INLINE mapWords #-}
+  {-# SPECIALISE mapWords :: (Word64 -> Word64) -> BS Word64 (HackL 1903) -> BS Word64 (HackL 1903)  #-}
+
   mapWords' f (BSCons w ws) = BSCons (f w) $ mapWords' f ws
   {-# INLINE mapWords' #-}
+  {-# SPECIALISE mapWords' :: (Word64 -> Word64) -> BS Word64 (HackL 1903) -> BS Word64 (HackL 1903)  #-}
 
   zipWordsWith op (BSCons w ws) (BSCons v vs) = BSCons (w `op` v) $ zipWordsWith op ws vs
   {-# INLINE zipWordsWith #-}
+  {-# SPECIALISE zipWordsWith :: (Word64 -> Word64 -> Word64) -> BS Word64 (HackL 1903) -> BS Word64 (HackL 1903) -> BS Word64 (HackL 1903)  #-}
 
 instance (Eq w) => Eq (BS w (Right (n :: Nat))) where
   (BSEnd as) == (BSEnd bs) = as == bs
@@ -379,3 +507,23 @@ instance (Bits w, BitSet w n, Eq (BS w n)) => Bits (BS w n) where
 type BitSetW w (n :: Nat) = BS w (FirstLength' w n)
 
 type BitSet64 (n :: Nat) = BS Word64 (FirstLength' Word64 n)
+
+{-# SPECIALISE shiftLInit :: BitSet64 1903 -> Int -> BitSet64 1903 #-}
+{-# SPECIALISE bitsetWidth :: Int #-}
+{-# SPECIALISE bsPopCount  :: BitSet64 1903 #-}
+{-# SPECIALISE bsTestBit  :: BitSet64 1903 -> Int -> BitSet64 1903 #-}
+{-# SPECIALISE empty  :: BitSet64 1903 -> Int -> BitSet64 1903 #-}
+{-# SPECIALISE lowerBitIndex :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE mapWords :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE mapWords' :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE shiftLInit :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE shiftLWholeWords :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE shiftLWithCarry :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE shiftRInit :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE shiftRWholeWords :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE shiftRWithCarry :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE singleBit :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE upperBitIndex :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE word :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE wordMask :: BitSet64 1903 -> Int -> BitSet64 1903  #-}
+{-# SPECIALISE zipWordsWith :: BitSet64 1903 -> Int -> BitSet64 1903  #-}

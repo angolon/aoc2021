@@ -94,6 +94,9 @@ blah =
 blag :: Int
 blag = lowerBitIndex @Word64 @(Left 257)
 
+bloop :: BitSet64 1903
+bloop = bit 1 `shiftL` 1832
+
 cucumberDance :: IO ()
 cucumberDance = do
   -- print $ empty @(BitSet Word64 257)
@@ -102,5 +105,6 @@ cucumberDance = do
   print blah
   print blag
   print $ (empty :: BS Word64 (Right 64))
+  print bloop
 
 -- print . showBS $ BSCons @(BSN 512) 0xFFF $ BSEnd 0xFF
