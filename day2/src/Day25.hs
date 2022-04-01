@@ -61,12 +61,12 @@ import Text.Show.Functions
 
 type WordT = Word16
 
-type Width = 10
+type Width = 7
 
 width :: (Integral a) => a
 width = fromInteger $ natVal (Proxy :: Proxy Width)
 
-type Height = 4
+type Height = 7
 
 height :: (Integral a) => a
 height = fromInteger $ natVal (Proxy :: Proxy Height)
@@ -95,7 +95,7 @@ instance Show CucumberMap where
     j <- [0 .. width]
     if
         | j == width -> return '\n'
-        | (`testBit` (width - j - 1)) $ eastwards ! i -> return '>'
+        | (`testBit` j) $ eastwards ! i -> return '>'
         | (`testBit` i) $ southwards ! j -> return 'v'
         | otherwise -> return '.'
 
@@ -116,11 +116,8 @@ parseMap =
       setSouth (i, j) m = m & south . traversed . index j %~ (`setBit` i)
       parseEast = do
         _ <- char '>'
-        -- We need to mirror the horizontal bits so that our bitwise rotate/shift
-        -- logic makes sense.
-        (i, j) <- mapIndices
-        let j' = width - j - 1
-        modifyState $ setEast (i, j')
+        ij <- mapIndices
+        modifyState $ setEast ij
       parseSouth = do
         _ <- char 'v'
         ij <- mapIndices
@@ -159,10 +156,10 @@ slice i =
 moveCucumbers :: (Bits b) => b -> b -> b
 moveCucumbers lane cross =
   let notOccupied = complement (cross .|. lane)
-      lane' = lane `rotateR` 1
+      lane' = lane `rotateL` 1
       moved = lane' .&. notOccupied
       immovable = moved `xor` lane'
-   in (immovable `rotateL` 1) .|. moved
+   in (immovable `rotateR` 1) .|. moved
 
 moveEastwards :: CucumberMap -> CucumberMap
 moveEastwards (CucumberMap eastwards southwards) =
@@ -180,38 +177,22 @@ moveSouthwards (CucumberMap eastwards southwards) =
         return $ moveCucumbers s overlaps
    in CucumberMap eastwards southwards'
 
+stepMap :: CucumberMap -> CucumberMap
+stepMap = moveSouthwards . moveEastwards
+
 cucumberDance :: IO ()
-cucumberDance =
-  -- ...>>>>>...
-  let eg :: Lane 11
-      eg = (`setBit` 3) . (`setBit` 4) . (`setBit` 5) . (`setBit` 6) $ bit 7
-      eg1 = moveCucumbers eg zeroBits
-      eg2 = moveCucumbers eg1 zeroBits
-      eg3 = moveCucumbers eg2 zeroBits
-      eg4 = moveCucumbers eg3 zeroBits
-      eg5 = moveCucumbers eg4 zeroBits
-      eg6 = moveCucumbers eg5 zeroBits
-      eg7 = moveCucumbers eg6 zeroBits
-      eg8 = moveCucumbers eg7 zeroBits
-   in do
-        -- print $ empty @(BitSet Word64 257)
-        print $ (empty :: BS Word64 (BSN Word64 257))
-        print $ bitsetWidth @Word64 @(Left 257)
-        print eg
-        print eg1
-        print eg2
-        print eg3
-        print eg4
-        print eg6
-        print eg7
-        print eg8
-        (Right parsed) <- getContents >>= runParserT parseMap emptyMap ""
-        print parsed
-        putStrLn "=========="
-        print $ moveEastwards parsed
-        putStrLn "=========="
-        print $ moveSouthwards parsed
-
--- print bloop
-
--- print . showBS $ BSCons @(BSN 512) 0xFFF $ BSEnd 0xFF
+cucumberDance = do
+  (Right parsed) <- getContents >>= runParserT parseMap emptyMap ""
+  print parsed
+  putStrLn "=========="
+  print $ moveEastwards parsed
+  putStrLn "=========="
+  print $ moveSouthwards parsed
+  putStrLn "=========="
+  print $ stepMap parsed
+  putStrLn "=========="
+  print . stepMap . stepMap $ parsed
+  putStrLn "=========="
+  print . stepMap . stepMap . stepMap $ parsed
+  putStrLn "=========="
+  print . stepMap . stepMap . stepMap . stepMap $ parsed
