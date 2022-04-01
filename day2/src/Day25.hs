@@ -59,14 +59,14 @@ import Text.Parsec
 import Text.Parsec.Char
 import Text.Show.Functions
 
-type WordT = Word16
+type WordT = Word64
 
-type Width = 10
+type Width = 139
 
 width :: (Integral a) => a
 width = fromInteger $ natVal (Proxy :: Proxy Width)
 
-type Height = 9
+type Height = 137
 
 height :: (Integral a) => a
 height = fromInteger $ natVal (Proxy :: Proxy Height)
