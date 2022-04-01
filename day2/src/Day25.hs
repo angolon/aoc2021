@@ -61,12 +61,12 @@ import Text.Show.Functions
 
 type WordT = Word16
 
-type Width = 7
+type Width = 10
 
 width :: (Integral a) => a
 width = fromInteger $ natVal (Proxy :: Proxy Width)
 
-type Height = 7
+type Height = 9
 
 height :: (Integral a) => a
 height = fromInteger $ natVal (Proxy :: Proxy Height)
@@ -180,19 +180,34 @@ moveSouthwards (CucumberMap eastwards southwards) =
 stepMap :: CucumberMap -> CucumberMap
 stepMap = moveSouthwards . moveEastwards
 
+solve :: CucumberMap -> IO ()
+solve initial =
+  let step :: S.StateT (CucumberMap, CucumberMap, Int) IO ()
+      step = do
+        (m1, m2, i) <- S.get
+        let m3 = stepMap m2
+        let i' = i + 1
+        S.lift $ putStrLn $ "After " ++ show i' ++ " steps"
+        S.lift $ print m3
+        S.put (m2, m3, i')
+        S.lift $ putStrLn ""
+        return ()
+
+      finished :: S.StateT (CucumberMap, CucumberMap, Int) IO Bool
+      finished = do
+        (m1, m2, i) <- S.get
+        return $ m1 == m2
+
+      solutionS = do
+        _ <- Loops.untilM_ step finished
+        (_, _, i) <- S.get
+        S.lift $ putStrLn $ "Finished after " ++ show i ++ " steps"
+   in S.evalStateT solutionS (initial, initial, 0)
+
 cucumberDance :: IO ()
 cucumberDance = do
   (Right parsed) <- getContents >>= runParserT parseMap emptyMap ""
+  putStrLn "Initial state:"
   print parsed
-  putStrLn "=========="
-  print $ moveEastwards parsed
-  putStrLn "=========="
-  print $ moveSouthwards parsed
-  putStrLn "=========="
-  print $ stepMap parsed
-  putStrLn "=========="
-  print . stepMap . stepMap $ parsed
-  putStrLn "=========="
-  print . stepMap . stepMap . stepMap $ parsed
-  putStrLn "=========="
-  print . stepMap . stepMap . stepMap . stepMap $ parsed
+  putStrLn ""
+  solve parsed
