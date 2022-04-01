@@ -111,7 +111,7 @@ type CucumberParser = ParsecT String CucumberMap IO
 
 parseMap :: CucumberParser CucumberMap
 parseMap =
-  let mapIndices = ((subtract 1 . sourceLine) &&& (subtract 1 . sourceColumn)) <$> getPosition
+  let mapIndices = ((subtract 1 . sourceLine) &&& (subtract 2 . sourceColumn)) <$> getPosition
       setEast (i, j) m = m & east . traversed . index i %~ (`setBit` j)
       setSouth (i, j) m = m & south . traversed . index j %~ (`setBit` i)
       parseEast = do
@@ -172,6 +172,14 @@ moveEastwards (CucumberMap eastwards southwards) =
         return $ moveCucumbers e overlaps
    in CucumberMap eastwards' southwards
 
+moveSouthwards :: CucumberMap -> CucumberMap
+moveSouthwards (CucumberMap eastwards southwards) =
+  let southwards' = do
+        (i, s) <- V.indexed southwards
+        let overlaps = slice i eastwards
+        return $ moveCucumbers s overlaps
+   in CucumberMap eastwards southwards'
+
 cucumberDance :: IO ()
 cucumberDance =
   -- ...>>>>>...
@@ -199,8 +207,10 @@ cucumberDance =
         print eg8
         (Right parsed) <- getContents >>= runParserT parseMap emptyMap ""
         print parsed
-        print "========"
+        putStrLn "=========="
         print $ moveEastwards parsed
+        putStrLn "=========="
+        print $ moveSouthwards parsed
 
 -- print bloop
 
