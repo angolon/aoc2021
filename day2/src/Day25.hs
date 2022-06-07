@@ -128,18 +128,6 @@ parseMap =
       parseLines = count height parseRow *> eof
    in parseLines *> getState
 
--- type Lane (n :: Nat) = BitSet64 n
-
-newtype Lane n = Lane (BitSet64 n) -- deriving (Eq, Ord, Show, Bits)
-
-deriving instance (Eq (BitSet64 n)) => Eq (Lane n)
-
-deriving instance (Ord (BitSet64 n)) => Ord (Lane n)
-
-deriving instance (Show (BitSet64 n)) => Show (Lane n)
-
-deriving instance (Bits (BitSet64 n)) => Bits (Lane n)
-
 slice ::
   forall a b.
   ( Bits a,
